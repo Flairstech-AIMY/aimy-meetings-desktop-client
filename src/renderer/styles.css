@@ -3,6 +3,14 @@
 @import "@flairstech-aimy/ui/styles.css";
 @source "../../node_modules/@flairstech-aimy/ui/dist/*.js";
 
+:root {
+  /* Ensure portaled Select dropdowns, menus, popovers, and tooltips render above Dialog modals (--z-modal: 500) */
+  --z-popover: 600;
+  --z-menu: 650;
+  --z-dropdown: 700;
+  --z-tooltip: 800;
+}
+
 html,
 body,
 #root {

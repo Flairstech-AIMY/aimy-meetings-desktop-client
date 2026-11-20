@@ -221,8 +221,28 @@ export function App() {
       .then((list) => {
         if (!active) return
         setGroups(list)
-        if (list.length > 0 && settingsRef.current.defaultGroupId == null) {
-          void window.aimyDesktop.updateSettings({ defaultGroupId: list[0].group_id })
+        if (list.length > 0) {
+          // Prefer "Personal" client / "Meetings Product" group when it exists
+          const norm = (s?: string | null): string => (s ?? '').trim().toLowerCase()
+          const preferred =
+            list.find(
+              (g) =>
+                norm(g.client_name).includes('personal') &&
+                norm(g.group_name).includes('meetings product')
+            ) ?? list.find((g) => norm(g.group_name).includes('meetings product'))
+
+          const currentId = settingsRef.current.defaultGroupId
+          const currentValid = currentId != null && list.some((g) => g.group_id === currentId)
+          const migrated = window.localStorage.getItem('aimy:preferred-group-migrated') === '1'
+
+          if (!currentValid || (!migrated && preferred && currentId !== preferred.group_id)) {
+            window.localStorage.setItem('aimy:preferred-group-migrated', '1')
+            void window.aimyDesktop.updateSettings({
+              defaultGroupId: (preferred ?? list[0]).group_id
+            })
+          } else if (!migrated) {
+            window.localStorage.setItem('aimy:preferred-group-migrated', '1')
+          }
         }
       })
       .catch((err) => {
