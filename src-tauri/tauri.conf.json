@@ -6,7 +6,7 @@
   "identifier": "com.flairstech.aimy.meetings",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build:web",
     "frontendDist": "../dist"
   },
