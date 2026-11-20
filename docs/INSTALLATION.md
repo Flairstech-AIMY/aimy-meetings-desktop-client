@@ -49,8 +49,8 @@ winget install Gyan.FFmpeg
 ### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/Flairstech-AIMY/aimy-meetings.git
-cd aimy-meetings
+git clone https://github.com/Flairstech-AIMY/aimy-meetings-desktop-client.git
+cd aimy-meetings-desktop-client
 ```
 
 ### 3. Configure the FlairsTech AiMY UI Registry

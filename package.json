@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Flairstech-AIMY/aimy-meetings.git"
+    "url": "https://github.com/Flairstech-AIMY/aimy-meetings-desktop-client.git"
   },
   "main": "./out/main/index.js",
   "scripts": {

@@ -57,7 +57,7 @@ flowchart TB
 ## 2. Project Directory Layout
 
 ```text
-aimy-meetings/
+aimy-meetings-desktop-client/
 ├── .github/
 │   └── workflows/
 │       └── release.yml                 # Automated GitHub Release workflow on v* tags

@@ -106,9 +106,17 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
   $false
 )
 
-$hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$zipStream = [System.IO.File]::OpenRead($zipPath)
+try {
+  $hashBytes = $sha256.ComputeHash($zipStream)
+  $hash = ([System.BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvariant()
+} finally {
+  $zipStream.Dispose()
+  $sha256.Dispose()
+}
 $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 2)
-"$hash  $zipName" | Set-Content -Path $sumsPath -Encoding UTF8
+[System.IO.File]::WriteAllText($sumsPath, "$hash  $zipName`n", (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host "==> Release package ready!" -ForegroundColor Green
 Write-Host "    Archive : $zipPath ($sizeMB MB)"
