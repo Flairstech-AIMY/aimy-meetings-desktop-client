@@ -1,0 +1,69 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AiMY Meetings Desktop Client",
+  "mainBinaryName": "AiMY Meetings",
+  "version": "1.0.0",
+  "identifier": "com.flairstech.aimy.meetings",
+  "build": {
+    "beforeDevCommand": "pnpm dev:web",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm build:web",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "AiMY Meetings Desktop Client",
+        "width": 1220,
+        "height": 820,
+        "minWidth": 920,
+        "minHeight": 620,
+        "center": true,
+        "backgroundColor": "#0c0d10"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "FlairsTech",
+    "copyright": "© FlairsTech AiMY Team",
+    "shortDescription": "AiMY Meetings Desktop Client",
+    "longDescription": "Desktop meeting recorder, DeepFilterNet3 neural speech enhancer, and AiMY Knowledge sync companion.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../resources/bin/deep-filter.exe": "bin/deep-filter.exe"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma"
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["aimy-meetings"]
+      }
+    }
+  }
+}

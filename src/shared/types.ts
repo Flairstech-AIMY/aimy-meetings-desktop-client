@@ -166,6 +166,24 @@ export interface StartRecordingRequest {
   meetingId?: string | null
 }
 
+export interface CaptureResult {
+  bytes: Uint8Array
+  ext: string
+  durationSeconds: number
+  nativeTempPath?: string
+}
+
+export interface NativeCaptureStartResult {
+  hasSystemAudio: boolean
+  hasMicAudio: boolean
+}
+
+export interface NativeCaptureStopResult {
+  tempWavPath: string
+  ext: string
+  durationSeconds: number
+}
+
 export interface AimyDesktopAPI {
   // Auth
   getAuthSession: () => Promise<AuthSession>
@@ -228,6 +246,24 @@ export interface AimyDesktopAPI {
   openExternal: (url: string) => Promise<void>
   checkFfmpegAvailable: () => Promise<boolean>
   checkDeepFilterAvailable: () => Promise<boolean>
+
+  // Native audio capture (Tauri WASAPI mic + loopback)
+  startNativeAudioCapture?: (options: {
+    captureSystemAudio: boolean
+    captureMicrophone: boolean
+    micDeviceId?: string | null
+  }) => Promise<NativeCaptureStartResult>
+  pauseNativeAudioCapture?: () => Promise<void>
+  resumeNativeAudioCapture?: () => Promise<void>
+  abortNativeAudioCapture?: () => Promise<void>
+  stopNativeAudioCapture?: () => Promise<NativeCaptureStopResult>
+  saveNativeCapturedAudio?: (
+    id: string,
+    tempWavPath: string,
+    durationSeconds: number,
+    notes?: string
+  ) => Promise<RecordingItem>
+  onRecordingAudioLevel?: (cb: (level: number) => void) => () => void
 
   // Subscriptions
   onAuthChanged: (cb: (session: AuthSession) => void) => () => void

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "IPC + event access for the local app windows only (the remote sign-in window gets no capabilities).",
+  "windows": ["main", "meeting-prompt"],
+  "permissions": ["core:default"]
+}

@@ -3,6 +3,8 @@
 /out/
 /dist/
 /release/
+/src-tauri/target/
+/src-tauri/gen/
 *.tsbuildinfo
 *.log
 .DS_Store

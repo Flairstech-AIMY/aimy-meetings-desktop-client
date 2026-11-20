@@ -9,37 +9,37 @@
     "type": "git",
     "url": "https://github.com/Flairstech-AIMY/aimy-meetings-desktop-client.git"
   },
-  "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "start": "electron .",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "dev": "tauri dev",
+    "dev:web": "vite",
+    "build": "tauri build",
+    "build:web": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json",
     "release:pack": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1"
   },
   "dependencies": {
     "@flairstech-aimy/tokens": "^2.0.3",
     "@flairstech-aimy/ui": "^2.0.3",
+    "@tauri-apps/api": "^2.5.0",
     "lucide-react": "^1.62.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",
+    "@tauri-apps/cli": "^2.5.0",
     "@types/node": "^22.13.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^35.0.0",
-    "electron-vite": "^3.1.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.0",
     "vite": "^6.2.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron",
       "esbuild"
     ]
   }

@@ -356,13 +356,21 @@ export function App() {
           title: activeLive.title.trim() || 'Meeting Recording',
           notes: activeLive.notes
         })
-        const saved = await window.aimyDesktop.saveRecordingAudio(
-          activeLive.recordingId,
-          result.bytes,
-          result.ext,
-          result.durationSeconds,
-          activeLive.notes
-        )
+        const saved =
+          result.nativeTempPath && window.aimyDesktop.saveNativeCapturedAudio
+            ? await window.aimyDesktop.saveNativeCapturedAudio(
+                activeLive.recordingId,
+                result.nativeTempPath,
+                result.durationSeconds,
+                activeLive.notes
+              )
+            : await window.aimyDesktop.saveRecordingAudio(
+                activeLive.recordingId,
+                result.bytes,
+                result.ext,
+                result.durationSeconds,
+                activeLive.notes
+              )
 
         const subText = !onlineRef.current
           ? 'Saved locally — will sync automatically once you are back online.'

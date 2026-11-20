@@ -9,6 +9,7 @@ export interface CaptureResult {
   bytes: Uint8Array
   ext: string
   durationSeconds: number
+  nativeTempPath?: string
 }
 
 export interface ActiveCaptureSession {
@@ -35,6 +36,53 @@ function pickSupportedMime(): { mimeType: string; ext: string } {
 }
 
 export async function startAudioCapture(options: CaptureOptions): Promise<ActiveCaptureSession> {
+  // Prefer native Rust WASAPI capture when running inside Tauri
+  const desktop = typeof window !== 'undefined' ? window.aimyDesktop : undefined
+  if (
+    desktop?.startNativeAudioCapture &&
+    desktop.stopNativeAudioCapture &&
+    desktop.pauseNativeAudioCapture &&
+    desktop.resumeNativeAudioCapture &&
+    desktop.abortNativeAudioCapture
+  ) {
+    const started = await desktop.startNativeAudioCapture({
+      captureSystemAudio: options.captureSystemAudio,
+      captureMicrophone: options.captureMicrophone,
+      micDeviceId: options.micDeviceId
+    })
+    const unsubLevel =
+      options.onLevel && desktop.onRecordingAudioLevel
+        ? desktop.onRecordingAudioLevel((lvl) => options.onLevel?.(lvl))
+        : null
+
+    return {
+      hasSystemAudio: started.hasSystemAudio,
+      hasMicAudio: started.hasMicAudio,
+      pause: () => {
+        void desktop.pauseNativeAudioCapture?.()
+      },
+      resume: () => {
+        void desktop.resumeNativeAudioCapture?.()
+      },
+      abort: () => {
+        unsubLevel?.()
+        options.onLevel?.(0)
+        void desktop.abortNativeAudioCapture?.()
+      },
+      stop: async () => {
+        unsubLevel?.()
+        options.onLevel?.(0)
+        const stopped = await desktop.stopNativeAudioCapture!()
+        return {
+          bytes: new Uint8Array(),
+          ext: stopped.ext,
+          durationSeconds: stopped.durationSeconds,
+          nativeTempPath: stopped.tempWavPath
+        }
+      }
+    }
+  }
+
   const streamsToClose: MediaStream[] = []
   let sysStream: MediaStream | null = null
   let micStream: MediaStream | null = null
