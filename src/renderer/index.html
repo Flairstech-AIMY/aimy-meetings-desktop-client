@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <title>AiMY Meetings</title>
+    <script>
+      ;(function () {
+        try {
+          var t = localStorage.getItem('aimy-ds-theme')
+          document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark')
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+        if (location.hash.indexOf('meeting-prompt') !== -1) {
+          document.documentElement.classList.add('prompt-window')
+        }
+      })()
+    </script>
+  </head>
+  <body class="bg-body text-ink font-sans antialiased">
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

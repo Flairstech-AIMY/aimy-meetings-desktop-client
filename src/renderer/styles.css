@@ -1,0 +1,38 @@
+@import "tailwindcss";
+@import "@flairstech-aimy/tokens/tailwind.css";
+@import "@flairstech-aimy/ui/styles.css";
+@source "../../node_modules/@flairstech-aimy/ui/dist/*.js";
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html.prompt-window,
+html.prompt-window body,
+html.prompt-window #root {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+/* Subtle native scrollbars aligned with AiMY surfaces */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--w14);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--w25);
+}

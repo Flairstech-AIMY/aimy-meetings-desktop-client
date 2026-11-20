@@ -1,0 +1,27 @@
+# Dependencies & Build outputs
+/node_modules/
+/out/
+/dist/
+/release/
+*.tsbuildinfo
+*.log
+.DS_Store
+
+# Large on-demand Whisper models (downloaded via Settings or GitHub Releases)
+resources/models/*.bin
+!resources/models/ggml-silero-v5.1.2.bin
+resources/models/*.slice
+resources/models/*.part
+resources/models/test-*.wav
+
+# Unused whisper.cpp test & demo binaries
+resources/bin/whisper/Release/test-*.exe
+resources/bin/whisper/Release/parakeet*
+resources/bin/whisper/Release/wchess.exe
+resources/bin/whisper/Release/whisper-talk-llama.exe
+resources/bin/whisper/Release/llama.dll
+resources/bin/whisper/Release/SDL2.dll
+resources/bin/whisper/Release/bench.exe
+resources/bin/whisper/Release/command.exe
+resources/bin/whisper/Release/main.exe
+resources/bin/whisper/Release/stream.exe
