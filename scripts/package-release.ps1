@@ -61,6 +61,12 @@ New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 Write-Host "==> Staging portable executable and resources..." -ForegroundColor Cyan
 Copy-Item -Path $builtExe -Destination (Join-Path $stageDir 'AiMY Meetings Desktop Client.exe') -Force
 
+# Copy WebView2Loader.dll if dynamically linked (required on GNU toolchain builds)
+$wv2Loader = Join-Path $targetRelease 'WebView2Loader.dll'
+if (Test-Path $wv2Loader) {
+  Copy-Item -Path $wv2Loader -Destination (Join-Path $stageDir 'WebView2Loader.dll') -Force
+}
+
 $binDest = Join-Path $stageDir 'bin'
 New-Item -ItemType Directory -Path $binDest -Force | Out-Null
 $deepFilterSrc = Join-Path $projectRoot 'resources\bin\deep-filter.exe'
