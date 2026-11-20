@@ -65,7 +65,7 @@ export function MeetingPromptWindow() {
           className="flex cursor-grab items-center justify-between gap-2 active:cursor-grabbing"
         >
           <div className="flex min-w-0 items-center gap-2">
-            <AimyMark variant="icon" title="AiMY Meetings" className="h-4 w-4 shrink-0" />
+            <AimyMark variant="icon" title="AiMY Meetings Desktop Client" className="h-4 w-4 shrink-0" />
             <span className="text-2xs font-bold text-ink">Meeting detected</span>
             <Tag tone="accent">{meeting.app}</Tag>
             {meeting.micActive && (

@@ -1,6 +1,6 @@
-# AiMY Meetings
+# AiMY Meetings Desktop Client
 
-**AiMY Meetings** is a Notion-inspired desktop meeting recorder, neural speech enhancer, and **AiMY Knowledge** synchronization companion built with **Electron 35**, **React 19**, **TypeScript 5.8**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
+**AiMY Meetings Desktop Client** is a Notion-inspired desktop meeting recorder, neural speech enhancer, and **AiMY Knowledge** synchronization companion built with **Electron 35**, **React 19**, **TypeScript 5.8**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
 
 ---
 
@@ -50,8 +50,8 @@ flowchart LR
    ```powershell
    winget install Gyan.FFmpeg
    ```
-2. Download **`AiMY-Meetings-v1.0.0-win-x64.zip`** from the [**Releases**](../../releases) page and extract it.
-3. Launch **`AiMY Meetings.exe`**.
+2. Download **`AiMY-Meetings-Desktop-Client-v1.0.0-win-x64.zip`** from the [**Releases**](../../releases) page and extract it.
+3. Launch **`AiMY Meetings Desktop Client.exe`**.
 4. Click **Sign in with AiMY** and open **Settings** to pick your **Target group**.
 
 👉 *See the full [Installation & Setup Guide](docs/INSTALLATION.md) for detailed instructions and troubleshooting.*
@@ -71,7 +71,7 @@ pnpm typecheck
 # 4. Build production bundles (out/)
 pnpm build
 
-# 5. Package standalone Windows x64 portable release (release/AiMY-Meetings-v1.0.0-win-x64.zip)
+# 5. Package standalone Windows x64 portable release (release/AiMY-Meetings-Desktop-Client-v1.0.0-win-x64.zip)
 pnpm release:pack
 ```
 

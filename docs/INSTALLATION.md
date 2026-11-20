@@ -1,4 +1,4 @@
-# AiMY Meetings — Installation & Setup Guide
+# AiMY Meetings Desktop Client — Installation & Setup Guide
 
 This guide covers both **End-User Installation** (running the pre-built desktop release) and **Developer Installation** (building and running from source).
 
@@ -21,12 +21,12 @@ winget install Gyan.FFmpeg
 
 *(Restart your terminal or sign out/in once so `ffmpeg` and `ffprobe` are available on your `PATH`. You can verify with `ffmpeg -version`.)*
 
-### 3. Download & Extract AiMY Meetings
+### 3. Download & Extract AiMY Meetings Desktop Client
 1. Go to the [**GitHub Releases**](../../releases) page of this repository.
-2. Download the latest **`AiMY-Meetings-v1.0.0-win-x64.zip`** archive from the release assets.
-3. Extract the `.zip` archive to a folder of your choice (for example, `C:\Users\<you>\Apps\AiMY-Meetings\`).
-4. Double-click **`AiMY Meetings.exe`** to launch the application.
-   - *Tip*: Right-click `AiMY Meetings.exe` → **Send to** → **Desktop (create shortcut)** or **Pin to taskbar** for quick access.
+2. Download the latest **`AiMY-Meetings-Desktop-Client-v1.0.0-win-x64.zip`** archive from the release assets.
+3. Extract the `.zip` archive to a folder of your choice (for example, `C:\Users\<you>\Apps\AiMY-Meetings-Desktop-Client\`).
+4. Double-click **`AiMY Meetings Desktop Client.exe`** to launch the application.
+   - *Tip*: Right-click `AiMY Meetings Desktop Client.exe` → **Send to** → **Desktop (create shortcut)** or **Pin to taskbar** for quick access.
 
 ### 4. First-Time Setup in the App
 1. **Sign in to AiMY Knowledge**:
@@ -101,7 +101,7 @@ pnpm start
 pnpm release:pack
 ```
 
-This runs `scripts/package-release.ps1` and creates a self-contained portable Windows x64 release archive in `release/AiMY-Meetings-v<version>-win-x64.zip` along with `release/SHA256SUMS.txt`.
+This runs `scripts/package-release.ps1` and creates a self-contained portable Windows x64 release archive in `release/AiMY-Meetings-Desktop-Client-v<version>-win-x64.zip` along with `release/SHA256SUMS.txt`.
 
 ---
 
@@ -109,8 +109,8 @@ This runs `scripts/package-release.ps1` and creates a self-contained portable Wi
 
 | Symptom | Cause | Resolution |
 | :--- | :--- | :--- |
-| **"FFmpeg missing" badge in Settings** | `ffmpeg` is not on the system `PATH`. | Run `winget install Gyan.FFmpeg` and restart AiMY Meetings. |
-| **Audio saves as `.webm` instead of `.mp3`** | FFmpeg was unavailable when recording stopped. | Install FFmpeg, open the recording in AiMY Meetings, and click **Enhance Audio** to transcode and denoise to `.mp3`. |
+| **"FFmpeg missing" badge in Settings** | `ffmpeg` is not on the system `PATH`. | Run `winget install Gyan.FFmpeg` and restart AiMY Meetings Desktop Client. |
+| **Audio saves as `.webm` instead of `.mp3`** | FFmpeg was unavailable when recording stopped. | Install FFmpeg, open the recording in AiMY Meetings Desktop Client, and click **Enhance Audio** to transcode and denoise to `.mp3`. |
 | **Sync fails with "Select a target AiMY Group first"** | No default group is selected. | Sign in to AiMY, open **Settings** (or the recording detail pane), and choose a **Target group**. |
 | **Sync fails with HTTP 401** | Cognito session token expired and could not be refreshed. | Click **Sign in with AiMY** in the top bar to re-authenticate. |
 | **Teams meeting not triggering popup** | Teams is on an idle tab (`Chat`, `Calendar`, `Activity`) or the pre-join preview screen. | Join the active call; the detector intentionally waits until you leave the pre-join screen or activate your mic/camera. |

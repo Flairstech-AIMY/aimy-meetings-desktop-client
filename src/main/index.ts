@@ -96,6 +96,9 @@ async function handleDeepLinkUrl(rawUrl: string): Promise<void> {
   }
 }
 
+// Keep the pre-rename data folder so existing recordings and sign-in sessions survive the product rename.
+app.setPath('userData', join(app.getPath('appData'), 'AiMY Meetings'))
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.exit(0)
@@ -137,8 +140,8 @@ function updateTray(): void {
   tray.setImage(getTrayIcon(isRecordingActive))
   tray.setToolTip(
     isRecordingActive
-      ? `AiMY Meetings — Recording: ${activeRecordingTitle || 'Active meeting'}`
-      : 'AiMY Meetings — Ready'
+      ? `AiMY Meetings Desktop Client — Recording: ${activeRecordingTitle || 'Active meeting'}`
+      : 'AiMY Meetings Desktop Client — Ready'
   )
 
   const pendingCount = store
@@ -147,7 +150,7 @@ function updateTray(): void {
 
   const menu = Menu.buildFromTemplate([
     {
-      label: 'Open AiMY Meetings',
+      label: 'Open AiMY Meetings Desktop Client',
       click: () => showMainWindow()
     },
     { type: 'separator' },
@@ -186,7 +189,7 @@ function updateTray(): void {
     },
     { type: 'separator' },
     {
-      label: 'Quit AiMY Meetings',
+      label: 'Quit AiMY Meetings Desktop Client',
       click: () => {
         isQuitting = true
         app.quit()
@@ -202,7 +205,7 @@ function createMainWindow(): void {
     height: 820,
     minWidth: 920,
     minHeight: 620,
-    title: 'AiMY Meetings',
+    title: 'AiMY Meetings Desktop Client',
     icon: getWindowIcon(),
     backgroundColor: '#0c0d10',
     autoHideMenuBar: true,

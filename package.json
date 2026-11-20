@@ -1,8 +1,8 @@
 {
-  "name": "aimy-meetings",
-  "productName": "AiMY Meetings",
+  "name": "aimy-meetings-desktop-client",
+  "productName": "AiMY Meetings Desktop Client",
   "version": "1.0.0",
-  "description": "AiMY Meetings — Desktop meeting recorder, DeepFilterNet3 neural speech enhancer, and AiMY Knowledge sync companion",
+  "description": "AiMY Meetings Desktop Client — Desktop meeting recorder, DeepFilterNet3 neural speech enhancer, and AiMY Knowledge sync companion",
   "author": "FlairsTech AiMY Team",
   "license": "UNLICENSED",
   "repository": {

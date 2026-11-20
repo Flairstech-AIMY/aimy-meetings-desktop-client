@@ -178,7 +178,7 @@ export function SignInPromptDialog({
 
           {!online && (
             <Notice tone="warn" title="No internet connection detected">
-              You can keep recording and taking notes locally. AiMY Meetings will prompt you to
+              You can keep recording and taking notes locally. AiMY Meetings Desktop Client will prompt you to
               sign in and sync once you are back online.
             </Notice>
           )}
@@ -192,7 +192,7 @@ export function SignInPromptDialog({
                 </p>
                 <p className="m-0 mt-1 text-2xs text-ink-secondary">
                   Use your browser&apos;s saved credentials or autofill, then allow the redirect
-                  back to AiMY Meetings. If your browser doesn&apos;t redirect back, switch to the
+                  back to AiMY Meetings Desktop Client. If your browser doesn&apos;t redirect back, switch to the
                   built-in sign-in window below.
                 </p>
               </div>

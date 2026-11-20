@@ -1,6 +1,6 @@
-# AiMY Meetings — Architecture & Technical Documentation
+# AiMY Meetings Desktop Client — Architecture & Technical Documentation
 
-**AiMY Meetings** is a desktop meeting recorder, neural audio enhancer, and **AiMY Knowledge** synchronization companion built with **Electron 35**, **React 19**, **TypeScript 5.8**, **Tailwind CSS 4**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
+**AiMY Meetings Desktop Client** is a desktop meeting recorder, neural audio enhancer, and **AiMY Knowledge** synchronization companion built with **Electron 35**, **React 19**, **TypeScript 5.8**, **Tailwind CSS 4**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
 
 ---
 

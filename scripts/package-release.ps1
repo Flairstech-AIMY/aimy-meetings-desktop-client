@@ -8,7 +8,7 @@ Set-Location $projectRoot
 
 $pkg = Get-Content -Raw -Path (Join-Path $projectRoot 'package.json') | ConvertFrom-Json
 $version = $pkg.version
-Write-Host "==> Packaging AiMY Meetings v$version (win-x64)..." -ForegroundColor Cyan
+Write-Host "==> Packaging AiMY Meetings Desktop Client v$version (win-x64)..." -ForegroundColor Cyan
 
 if (-not $SkipBuild) {
   Write-Host "==> Running production build (electron-vite build)..." -ForegroundColor Cyan
@@ -24,8 +24,8 @@ if (-not (Test-Path $electronDist)) {
 }
 
 $releaseRoot = Join-Path $projectRoot 'release'
-$stageDir = Join-Path $releaseRoot 'AiMY-Meetings-win32-x64'
-$zipName = "AiMY-Meetings-v$version-win-x64.zip"
+$stageDir = Join-Path $releaseRoot 'AiMY-Meetings-Desktop-Client-win32-x64'
+$zipName = "AiMY-Meetings-Desktop-Client-v$version-win-x64.zip"
 $zipPath = Join-Path $releaseRoot $zipName
 $sumsPath = Join-Path $releaseRoot 'SHA256SUMS.txt'
 
@@ -46,9 +46,9 @@ if (Test-Path $defaultAsar) {
 }
 
 $electronExe = Join-Path $stageDir 'electron.exe'
-$appExe = Join-Path $stageDir 'AiMY Meetings.exe'
+$appExe = Join-Path $stageDir 'AiMY Meetings Desktop Client.exe'
 if (Test-Path $electronExe) {
-  Rename-Item -Path $electronExe -NewName 'AiMY Meetings.exe'
+  Rename-Item -Path $electronExe -NewName 'AiMY Meetings Desktop Client.exe'
 }
 
 $appDir = Join-Path $stageDir 'resources\app'
@@ -57,7 +57,7 @@ New-Item -ItemType Directory -Path $appDir -Force | Out-Null
 # Write clean production package.json
 $prodPkg = [ordered]@{
   name        = $pkg.name
-  productName = 'AiMY Meetings'
+  productName = 'AiMY Meetings Desktop Client'
   version     = $pkg.version
   description = $pkg.description
   author      = 'FlairsTech AiMY Team'

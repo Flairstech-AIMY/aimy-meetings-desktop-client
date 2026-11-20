@@ -99,7 +99,7 @@ export class SyncManager {
           `# ${item.title}`,
           '',
           `- **Recorded**: ${new Date(item.createdAt).toLocaleString()}`,
-          `- **Source**: ${item.meetingApp || 'AiMY Meetings Desktop'}`,
+          `- **Source**: ${item.meetingApp || 'AiMY Meetings Desktop Client'}`,
           `- **Duration**: ${Math.floor(item.durationSeconds / 60)}m ${item.durationSeconds % 60}s`,
           '',
           bodySections.join('\n\n')

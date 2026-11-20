@@ -49,5 +49,5 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: |
-            release/AiMY-Meetings-*.zip
+            release/AiMY-Meetings-Desktop-Client-*.zip
             release/SHA256SUMS.txt
