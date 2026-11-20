@@ -8,11 +8,9 @@ This guide covers both **End-User Installation** (running the pre-built desktop 
 
 ### 1. System Requirements
 - **Operating System**: Windows 10 (version 1903+) or Windows 11 (64-bit)
-- **RAM**: 4 GB minimum (8 GB+ recommended for on-device `Whisper Large v3 Turbo Q5` live transcription)
-- **Disk Space**:
-  - ~350 MB for the core application, DeepFilterNet3 neural denoiser, and `whisper.cpp` runtime
-  - ~190 MB to ~550 MB per optional on-device Whisper model downloaded in Settings
-- **FFmpeg**: Required on system `PATH` for MP3 encoding, DeepFilterNet3 audio pre/post-processing, and Whisper 16 kHz audio conversion.
+- **RAM**: 4 GB minimum
+- **Disk Space**: ~300 MB for the core application and DeepFilterNet3 neural denoiser
+- **FFmpeg**: Required on system `PATH` for MP3 encoding and DeepFilterNet3 audio pre/post-processing.
 
 ### 2. Install FFmpeg (One-Time Prerequisite)
 Open **PowerShell** or **Windows Terminal** and install FFmpeg via Winget:
@@ -37,12 +35,6 @@ winget install Gyan.FFmpeg
 2. **Select Your Target Group & Agents**:
    - Open **Settings** (gear icon in the top-right).
    - Select your default **Target group** (required for syncing) and optional **Assigned agents**.
-3. **Download an On-Device Whisper Model (For Live & Offline Transcription)**:
-   - In **Settings → On-Device Live Transcription (Whisper + Silero VAD)**, click **Download** next to:
-     - **Whisper Large v3 Turbo — Egyptian AR + EN (Q5)** (~547 MB) — *Recommended for Egyptian Arabic + English code-switching meetings*.
-     - **Whisper Large v3 Turbo — Base (Q5)** (~547 MB) — *Standard multilingual Whisper Large v3 Turbo*.
-     - **Whisper Small (Q5)** (~181 MB) — *Fast, lightweight fallback for low-memory laptops*.
-   - *(Optional Offline Model Install)*: If you downloaded a pre-built `.bin` model directly from GitHub Releases, place it inside `resources/models/` (next to `ggml-silero-v5.1.2.bin`) and restart the app.
 
 ---
 
@@ -57,7 +49,7 @@ winget install Gyan.FFmpeg
 ### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/mhsFlairs/aimy-meetings.git
+git clone https://github.com/Flairstech-AIMY/aimy-meetings.git
 cd aimy-meetings
 ```
 
@@ -78,15 +70,9 @@ pnpm install
 
 > **Note**: `.npmrc` and `package.json` (`pnpm.onlyBuiltDependencies`) automatically allow `electron` and `esbuild` postinstall scripts to download the Electron runtime binary.
 
-### 5. Verify Native Binaries & VAD Model
-Ensure the following bundled native files are present in your working tree:
+### 5. Verify Native Binaries
+Ensure the following bundled native binary is present in your working tree:
 - `resources/bin/deep-filter.exe` — DeepFilterNet3 CLI binary
-- `resources/bin/whisper/Release/whisper-server.exe` — Local live transcription HTTP inference server
-- `resources/bin/whisper/Release/whisper-cli.exe` — Full-file local Whisper CLI
-- `resources/bin/whisper/Release/whisper-quantize.exe` — GGUF/GGML Q5_0 model quantizer
-- `resources/models/ggml-silero-v5.1.2.bin` — Silero VAD v5.1.2 voice activity detection weights
-
-*(In the app's **Settings** dialog, green status badges confirm that `FFmpeg`, `DeepFilterNet3`, and `Whisper + Silero VAD` are detected.)*
 
 ### 6. Run in Development Mode
 
@@ -125,7 +111,6 @@ This runs `scripts/package-release.ps1` and creates a self-contained portable Wi
 | :--- | :--- | :--- |
 | **"FFmpeg missing" badge in Settings** | `ffmpeg` is not on the system `PATH`. | Run `winget install Gyan.FFmpeg` and restart AiMY Meetings. |
 | **Audio saves as `.webm` instead of `.mp3`** | FFmpeg was unavailable when recording stopped. | Install FFmpeg, open the recording in AiMY Meetings, and click **Enhance Audio** to transcode and denoise to `.mp3`. |
-| **Live transcription says "Download a Whisper model in Settings"** | No `.bin` Whisper model is installed yet. | Open **Settings → On-Device Live Transcription** and click **Download** on one of the three models. |
 | **Sync fails with "Select a target AiMY Group first"** | No default group is selected. | Sign in to AiMY, open **Settings** (or the recording detail pane), and choose a **Target group**. |
 | **Sync fails with HTTP 401** | Cognito session token expired and could not be refreshed. | Click **Sign in with AiMY** in the top bar to re-authenticate. |
 | **Teams meeting not triggering popup** | Teams is on an idle tab (`Chat`, `Calendar`, `Activity`) or the pre-join preview screen. | Join the active call; the detector intentionally waits until you leave the pre-join screen or activate your mic/camera. |
