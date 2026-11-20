@@ -56,10 +56,6 @@ impl RecorderStore {
         store
     }
 
-    pub fn data_dir(&self) -> &Path {
-        &self.data_dir
-    }
-
     pub fn resource_dir(&self) -> Option<&Path> {
         self.resource_dir.as_deref()
     }
