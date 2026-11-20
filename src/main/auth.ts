@@ -1,7 +1,8 @@
-import { app, BrowserWindow, safeStorage, session } from 'electron'
+import { app, BrowserWindow, safeStorage, session, shell } from 'electron'
+import { createHash, randomBytes } from 'crypto'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { AuthSession, AuthUser } from '@shared/types'
+import type { AuthSession, AuthStateReason, AuthUser, SignInMethod } from '@shared/types'
 import { getWindowIcon } from './appIcons'
 
 interface StoredAuthPayload {
@@ -12,10 +13,39 @@ interface StoredAuthPayload {
   user?: AuthUser
 }
 
+interface PendingBrowserAuth {
+  state: string
+  codeVerifier: string
+  resolve: (session: AuthSession) => void
+  reject: (err: Error) => void
+  timeout: NodeJS.Timeout
+}
+
+type RefreshOutcome = 'refreshed' | 'unauthorized' | 'network_error'
+
+export const AUTH_PROTOCOL = 'aimy-meetings'
+export const AUTH_CALLBACK_URL = `${AUTH_PROTOCOL}://auth/callback`
+
 const AUTH_PARTITION = 'persist:aimy-auth'
-const COGNITO_TOKEN_URL =
-  'https://us-east-1mk2fvpvwg.auth.us-east-1.amazoncognito.com/oauth2/token'
+const COGNITO_DOMAIN = 'https://us-east-1mk2fvpvwg.auth.us-east-1.amazoncognito.com'
+const COGNITO_AUTHORIZE_URL = `${COGNITO_DOMAIN}/oauth2/authorize`
+const COGNITO_TOKEN_URL = `${COGNITO_DOMAIN}/oauth2/token`
 const COGNITO_CLIENT_ID = '15ekjkcakreuqhhog5vh4flhvm'
+const COGNITO_SCOPES = 'openid email profile'
+
+const REFRESH_BUFFER_MS = 60_000
+const MAX_TIMEOUT_MS = 2_147_483_647
+const BROWSER_AUTH_TIMEOUT_MS = 5 * 60_000
+
+function toBase64Url(buf: Buffer): string {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function createPkcePair(): { codeVerifier: string; codeChallenge: string } {
+  const codeVerifier = toBase64Url(randomBytes(32))
+  const codeChallenge = toBase64Url(createHash('sha256').update(codeVerifier).digest())
+  return { codeVerifier, codeChallenge }
+}
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -61,10 +91,17 @@ function expiresAtFromToken(token: string, fallback?: number | null): number | n
 
 export class AuthManager {
   private payload: StoredAuthPayload | null = null
+  private lastKnownUser: AuthUser | undefined = undefined
+  private lastKnownExpiresAt: number | null | undefined = undefined
+  private lastReason: AuthStateReason = 'initial'
   private loginWindow: BrowserWindow | null = null
+  private loginWindowCancelling = false
+  private pendingBrowserAuth: PendingBrowserAuth | null = null
+  private expiryTimer: NodeJS.Timeout | null = null
+  private refreshInFlight: Promise<RefreshOutcome> | null = null
   private listeners = new Set<(session: AuthSession) => void>()
 
-  constructor() {
+  constructor(private isOnline: () => boolean = () => true) {
     this.loadFromDisk()
   }
 
@@ -101,6 +138,8 @@ export class AuthManager {
       const parsed = JSON.parse(jsonStr) as StoredAuthPayload
       if (parsed?.idToken) {
         this.payload = parsed
+        this.lastKnownUser = parsed.user
+        this.lastKnownExpiresAt = parsed.expiresAt ?? null
       }
     } catch (err) {
       console.error('[Auth] Failed to load saved session:', err)
@@ -125,9 +164,154 @@ export class AuthManager {
     }
   }
 
+  private clearExpiryTimer(): void {
+    if (this.expiryTimer) {
+      clearTimeout(this.expiryTimer)
+      this.expiryTimer = null
+    }
+  }
+
+  private scheduleExpiryTimer(): void {
+    this.clearExpiryTimer()
+    if (!this.payload?.idToken || !this.payload.expiresAt) return
+
+    const targetTime = this.payload.refreshToken
+      ? this.payload.expiresAt - REFRESH_BUFFER_MS
+      : this.payload.expiresAt + 500
+
+    const remaining = targetTime - Date.now()
+    const delay = Math.max(1_000, Math.min(remaining, MAX_TIMEOUT_MS))
+
+    this.expiryTimer = setTimeout(() => {
+      this.expiryTimer = null
+      void this.onExpiryTimerFired()
+    }, delay)
+  }
+
+  private async onExpiryTimerFired(): Promise<void> {
+    if (!this.payload?.idToken || !this.payload.expiresAt) return
+    const now = Date.now()
+
+    if (this.payload.refreshToken) {
+      if (this.payload.expiresAt - REFRESH_BUFFER_MS > now + 2_000) {
+        this.scheduleExpiryTimer()
+        return
+      }
+      if (!this.isOnline()) {
+        // Stay quiet while offline; onConnectivityRestored will refresh when back online.
+        return
+      }
+      const outcome = await this.tryRefreshToken(this.payload.refreshToken)
+      if (outcome === 'unauthorized') {
+        this.markExpired()
+      } else if (outcome === 'refreshed') {
+        this.scheduleExpiryTimer()
+      }
+      return
+    }
+
+    if (now < this.payload.expiresAt) {
+      this.scheduleExpiryTimer()
+      return
+    }
+
+    this.markExpired()
+  }
+
+  private markExpired(): void {
+    const prevUser = this.payload?.user ?? this.lastKnownUser
+    const prevExpiresAt = this.payload?.expiresAt ?? this.lastKnownExpiresAt ?? null
+    this.clearExpiryTimer()
+    this.payload = null
+    this.lastKnownUser = prevUser
+    this.lastKnownExpiresAt = prevExpiresAt
+    this.lastReason = 'expired'
+    this.saveToDisk()
+    this.emit()
+  }
+
+  private setAuthenticatedPayload(next: StoredAuthPayload, reason: AuthStateReason = 'signed-in'): void {
+    const exp = expiresAtFromToken(next.idToken, next.expiresAt)
+    const user = userFromToken(next.idToken, next.user)
+    this.payload = {
+      idToken: next.idToken,
+      accessToken: next.accessToken,
+      refreshToken: next.refreshToken,
+      expiresAt: exp,
+      user
+    }
+    this.lastKnownUser = user
+    this.lastKnownExpiresAt = exp
+    this.lastReason = reason
+    this.saveToDisk()
+    this.scheduleExpiryTimer()
+    this.emit()
+  }
+
+  async initialize(): Promise<void> {
+    if (!this.payload?.idToken) {
+      this.lastReason = 'initial'
+      return
+    }
+
+    const now = Date.now()
+    const expiresAt = this.payload.expiresAt ?? null
+
+    if (expiresAt != null && expiresAt - REFRESH_BUFFER_MS <= now) {
+      if (this.payload.refreshToken) {
+        if (this.isOnline()) {
+          const outcome = await this.tryRefreshToken(this.payload.refreshToken)
+          if (outcome === 'unauthorized') {
+            this.markExpired()
+          } else if (outcome === 'refreshed') {
+            this.scheduleExpiryTimer()
+          }
+        }
+        return
+      }
+
+      if (expiresAt <= now) {
+        this.markExpired()
+        return
+      }
+    }
+
+    this.scheduleExpiryTimer()
+  }
+
+  async onConnectivityRestored(): Promise<void> {
+    if (!this.payload?.idToken) return
+
+    const now = Date.now()
+    const expiresAt = this.payload.expiresAt ?? null
+    if (expiresAt != null && expiresAt - REFRESH_BUFFER_MS <= now) {
+      if (this.payload.refreshToken) {
+        const outcome = await this.tryRefreshToken(this.payload.refreshToken)
+        if (outcome === 'unauthorized') {
+          this.markExpired()
+        } else if (outcome === 'refreshed') {
+          this.scheduleExpiryTimer()
+        }
+        return
+      }
+      if (expiresAt <= now) {
+        this.markExpired()
+        return
+      }
+    }
+
+    // Re-arm timer (important after laptop sleep/resume where timers drift)
+    this.scheduleExpiryTimer()
+  }
+
   getSession(): AuthSession {
     if (!this.payload?.idToken) {
-      return { authenticated: false }
+      return {
+        authenticated: false,
+        user: this.lastReason === 'expired' ? this.lastKnownUser : undefined,
+        expiresAt: this.lastReason === 'expired' ? this.lastKnownExpiresAt : undefined,
+        reason: this.lastReason
+      }
     }
     const now = Date.now()
     const expired = this.payload.expiresAt != null && this.payload.expiresAt <= now
@@ -135,66 +319,113 @@ export class AuthManager {
       return {
         authenticated: false,
         user: this.payload.user,
-        expiresAt: this.payload.expiresAt
+        expiresAt: this.payload.expiresAt,
+        reason: 'expired'
       }
     }
     return {
       authenticated: true,
       user: this.payload.user,
       expiresAt: this.payload.expiresAt ?? null,
-      hasRefreshToken: Boolean(this.payload.refreshToken)
+      hasRefreshToken: Boolean(this.payload.refreshToken),
+      reason: this.lastReason
     }
   }
 
   async getValidToken(): Promise<string | null> {
     if (!this.payload?.idToken) return null
     const now = Date.now()
-    const bufferMs = 60_000
-    if (this.payload.expiresAt && this.payload.expiresAt - bufferMs <= now) {
+    if (this.payload.expiresAt && this.payload.expiresAt - REFRESH_BUFFER_MS <= now) {
       if (this.payload.refreshToken) {
-        const refreshed = await this.tryRefreshToken(this.payload.refreshToken)
-        if (refreshed) return this.payload.idToken
+        if (!this.isOnline()) return null
+        const outcome = await this.tryRefreshToken(this.payload.refreshToken)
+        if (outcome === 'refreshed' && this.payload?.idToken) {
+          return this.payload.idToken
+        }
+        if (outcome === 'unauthorized') {
+          this.markExpired()
+        }
+        return null
+      }
+      if (this.payload.expiresAt <= now) {
+        this.markExpired()
       }
       return null
     }
     return this.payload.idToken
   }
 
-  private async tryRefreshToken(refreshToken: string): Promise<boolean> {
+  async handleUnauthorized(): Promise<string | null> {
+    if (!this.payload?.idToken) return null
+
+    if (this.payload.refreshToken && this.isOnline()) {
+      const outcome = await this.tryRefreshToken(this.payload.refreshToken)
+      if (outcome === 'refreshed' && this.payload?.idToken) {
+        return this.payload.idToken
+      }
+      if (outcome === 'network_error') {
+        return null
+      }
+    }
+
+    this.markExpired()
+    return null
+  }
+
+  private async tryRefreshToken(refreshToken: string): Promise<RefreshOutcome> {
+    if (this.refreshInFlight) {
+      return this.refreshInFlight
+    }
+
+    this.refreshInFlight = (async (): Promise<RefreshOutcome> => {
+      try {
+        const body = new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: COGNITO_CLIENT_ID,
+          refresh_token: refreshToken
+        })
+        const res = await fetch(COGNITO_TOKEN_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString()
+        })
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          return 'unauthorized'
+        }
+        if (!res.ok) {
+          return 'network_error'
+        }
+        const data = (await res.json()) as {
+          id_token?: string
+          access_token?: string
+          refresh_token?: string
+          expires_in?: number
+        }
+        if (!data.id_token) return 'unauthorized'
+        this.setAuthenticatedPayload(
+          {
+            idToken: data.id_token,
+            accessToken: data.access_token ?? this.payload?.accessToken,
+            refreshToken: data.refresh_token ?? refreshToken,
+            expiresAt: expiresAtFromToken(
+              data.id_token,
+              data.expires_in ? Date.now() + data.expires_in * 1000 : null
+            ),
+            user: userFromToken(data.id_token, this.payload?.user)
+          },
+          'signed-in'
+        )
+        return 'refreshed'
+      } catch (err) {
+        console.error('[Auth] Token refresh failed:', err)
+        return 'network_error'
+      }
+    })()
+
     try {
-      const body = new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: COGNITO_CLIENT_ID,
-        refresh_token: refreshToken
-      })
-      const res = await fetch(COGNITO_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString()
-      })
-      if (!res.ok) return false
-      const data = (await res.json()) as {
-        id_token?: string
-        access_token?: string
-        expires_in?: number
-      }
-      if (!data.id_token) return false
-      this.payload = {
-        idToken: data.id_token,
-        accessToken: data.access_token ?? this.payload?.accessToken,
-        refreshToken,
-        expiresAt: expiresAtFromToken(
-          data.id_token,
-          data.expires_in ? Date.now() + data.expires_in * 1000 : null
-        ),
-        user: userFromToken(data.id_token, this.payload?.user)
-      }
-      this.saveToDisk()
-      this.emit()
-      return true
-    } catch (err) {
-      console.error('[Auth] Token refresh failed:', err)
-      return false
+      return await this.refreshInFlight
+    } finally {
+      this.refreshInFlight = null
     }
   }
 
@@ -207,18 +438,40 @@ export class AuthManager {
     if (exp && exp <= Date.now()) {
       throw new Error('This token is already expired. Please sign in to get a fresh token.')
     }
-    this.payload = {
-      idToken: token,
-      expiresAt: exp,
-      user: userFromToken(token)
-    }
-    this.saveToDisk()
-    this.emit()
+    this.setAuthenticatedPayload(
+      {
+        idToken: token,
+        expiresAt: exp,
+        user: userFromToken(token)
+      },
+      'signed-in'
+    )
     return this.getSession()
   }
 
+  cancelSignIn(): void {
+    this.cancelPendingBrowserAuth()
+    if (this.loginWindow && !this.loginWindow.isDestroyed()) {
+      this.loginWindowCancelling = true
+      this.loginWindow.close()
+    }
+  }
+
+  private cancelPendingBrowserAuth(): void {
+    if (!this.pendingBrowserAuth) return
+    const pending = this.pendingBrowserAuth
+    this.pendingBrowserAuth = null
+    clearTimeout(pending.timeout)
+    pending.resolve(this.getSession())
+  }
+
   async signOut(): Promise<AuthSession> {
+    this.cancelSignIn()
+    this.clearExpiryTimer()
     this.payload = null
+    this.lastKnownUser = undefined
+    this.lastKnownExpiresAt = undefined
+    this.lastReason = 'signed-out'
     this.saveToDisk()
     try {
       const authSession = session.fromPartition(AUTH_PARTITION)
@@ -230,7 +483,184 @@ export class AuthManager {
     return this.getSession()
   }
 
-  async signIn(consoleBaseUrl: string, parent?: BrowserWindow | null): Promise<AuthSession> {
+  dispose(): void {
+    this.clearExpiryTimer()
+    this.cancelSignIn()
+  }
+
+  async signIn(
+    consoleBaseUrl: string,
+    parent?: BrowserWindow | null,
+    method: SignInMethod = 'browser'
+  ): Promise<AuthSession> {
+    if (method === 'embedded') {
+      this.cancelPendingBrowserAuth()
+      return this.signInViaEmbeddedWindow(consoleBaseUrl, parent)
+    }
+    return this.signInViaBrowser()
+  }
+
+  private async signInViaBrowser(): Promise<AuthSession> {
+    // Cancel any existing embedded or browser attempt before launching a fresh one
+    this.cancelSignIn()
+
+    const { codeVerifier, codeChallenge } = createPkcePair()
+    const state = toBase64Url(randomBytes(24))
+
+    const params = new URLSearchParams({
+      client_id: COGNITO_CLIENT_ID,
+      response_type: 'code',
+      scope: COGNITO_SCOPES,
+      redirect_uri: AUTH_CALLBACK_URL,
+      state,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge
+    })
+    const authorizeUrl = `${COGNITO_AUTHORIZE_URL}?${params.toString()}`
+
+    return new Promise<AuthSession>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (this.pendingBrowserAuth?.state === state) {
+          this.pendingBrowserAuth = null
+          reject(
+            new Error(
+              'Browser sign-in timed out. Make sure aimy-meetings://auth/callback is allowed in Cognito, or use the built-in sign-in window.'
+            )
+          )
+        }
+      }, BROWSER_AUTH_TIMEOUT_MS)
+
+      this.pendingBrowserAuth = {
+        state,
+        codeVerifier,
+        resolve,
+        reject,
+        timeout
+      }
+
+      void shell.openExternal(authorizeUrl).catch((err) => {
+        if (this.pendingBrowserAuth?.state === state) {
+          clearTimeout(timeout)
+          this.pendingBrowserAuth = null
+          reject(
+            err instanceof Error
+              ? err
+              : new Error('Could not open your default browser for sign-in.')
+          )
+        }
+      })
+    })
+  }
+
+  async handleProtocolCallback(rawUrl: string): Promise<boolean> {
+    let parsed: URL
+    try {
+      parsed = new URL(rawUrl)
+    } catch {
+      return false
+    }
+
+    if (parsed.protocol !== `${AUTH_PROTOCOL}:`) {
+      return false
+    }
+
+    const pending = this.pendingBrowserAuth
+    if (!pending) {
+      return true
+    }
+
+    const oauthError = parsed.searchParams.get('error')
+    const oauthErrorDescription = parsed.searchParams.get('error_description')
+    if (oauthError) {
+      this.pendingBrowserAuth = null
+      clearTimeout(pending.timeout)
+      const detail = oauthErrorDescription || oauthError
+      pending.reject(new Error(`Sign-in was rejected by Cognito: ${detail}`))
+      return true
+    }
+
+    const state = parsed.searchParams.get('state')
+    const code = parsed.searchParams.get('code')
+    if (!code || state !== pending.state) {
+      this.pendingBrowserAuth = null
+      clearTimeout(pending.timeout)
+      pending.reject(new Error('Invalid sign-in callback received. Please try signing in again.'))
+      return true
+    }
+
+    this.pendingBrowserAuth = null
+    clearTimeout(pending.timeout)
+
+    try {
+      const body = new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: COGNITO_CLIENT_ID,
+        code,
+        redirect_uri: AUTH_CALLBACK_URL,
+        code_verifier: pending.codeVerifier
+      })
+
+      const res = await fetch(COGNITO_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      })
+
+      const text = await res.text()
+      type CognitoTokenResponse = {
+        id_token?: string
+        access_token?: string
+        refresh_token?: string
+        expires_in?: number
+        error?: string
+        error_description?: string
+      }
+      let data: CognitoTokenResponse | null = null
+      try {
+        data = text ? (JSON.parse(text) as CognitoTokenResponse) : null
+      } catch {
+        data = null
+      }
+
+      if (!res.ok || !data?.id_token) {
+        const msg =
+          data?.error_description ||
+          data?.error ||
+          `Token exchange failed with HTTP ${res.status}.`
+        pending.reject(new Error(msg))
+        return true
+      }
+
+      this.setAuthenticatedPayload(
+        {
+          idToken: data.id_token,
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token,
+          expiresAt: expiresAtFromToken(
+            data.id_token,
+            data.expires_in ? Date.now() + data.expires_in * 1000 : null
+          ),
+          user: userFromToken(data.id_token)
+        },
+        'signed-in'
+      )
+
+      pending.resolve(this.getSession())
+      return true
+    } catch (err) {
+      pending.reject(
+        err instanceof Error
+          ? err
+          : new Error('Failed to exchange sign-in code with Cognito.')
+      )
+      return true
+    }
+  }
+
+  private async signInViaEmbeddedWindow(
+    consoleBaseUrl: string,
+    parent?: BrowserWindow | null
+  ): Promise<AuthSession> {
     if (this.loginWindow && !this.loginWindow.isDestroyed()) {
       this.loginWindow.focus()
       return this.getSession()
@@ -240,6 +670,7 @@ export class AuthManager {
     const loginUrl = `${baseUrl}/console`
     const targetHost = new URL(baseUrl).hostname
     const authSession = session.fromPartition(AUTH_PARTITION)
+    this.loginWindowCancelling = false
 
     return new Promise<AuthSession>((resolve, reject) => {
       let settled = false
@@ -265,15 +696,16 @@ export class AuthManager {
         }
         settled = true
         cleanup()
-        this.payload = {
-          idToken: next.idToken,
-          accessToken: next.accessToken,
-          refreshToken: next.refreshToken,
-          expiresAt: exp,
-          user: userFromToken(next.idToken, next.user)
-        }
-        this.saveToDisk()
-        this.emit()
+        this.setAuthenticatedPayload(
+          {
+            idToken: next.idToken,
+            accessToken: next.accessToken,
+            refreshToken: next.refreshToken,
+            expiresAt: exp,
+            user: userFromToken(next.idToken, next.user)
+          },
+          'signed-in'
+        )
         if (this.loginWindow && !this.loginWindow.isDestroyed()) {
           this.loginWindow.close()
         }
@@ -384,10 +816,16 @@ export class AuthManager {
 
       win.on('closed', () => {
         this.loginWindow = null
+        const wasCancelled = this.loginWindowCancelling
+        this.loginWindowCancelling = false
         cleanup()
         if (!settled) {
           settled = true
-          reject(new Error('Sign-in window was closed before completing authentication.'))
+          if (wasCancelled) {
+            resolve(this.getSession())
+          } else {
+            reject(new Error('Sign-in window was closed before completing authentication.'))
+          }
         }
       })
 

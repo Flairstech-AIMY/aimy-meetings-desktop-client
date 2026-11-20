@@ -12,19 +12,21 @@ import {
   Tray
 } from 'electron'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import type {
   AppSettings,
   CreateRecordingInput,
   DetectedMeeting,
+  SignInMethod,
   StartRecordingRequest,
   UpdateRecordingPatch
 } from '@shared/types'
 import { AimyApiClient } from './aimyApi'
 import { getAppIconPng, getTrayIcon, getWindowIcon } from './appIcons'
 import { checkDeepFilterAvailable } from './audioEnhancer'
-import { AuthManager } from './auth'
+import { AUTH_CALLBACK_URL, AUTH_PROTOCOL, AuthManager } from './auth'
+import { ConnectivityMonitor } from './connectivity'
 import { MeetingDetector } from './meetingDetector'
 import { PromptWindowManager } from './promptWindow'
 import { RecorderStore } from './recorderStore'
@@ -55,18 +57,62 @@ const rendererUrl = process.env['ELECTRON_RENDERER_URL']
 const rendererHtml = join(__dirname, '../renderer/index.html')
 
 let authManager: AuthManager
+let connectivityMonitor: ConnectivityMonitor
 let store: RecorderStore
 let apiClient: AimyApiClient
 let syncManager: SyncManager
 let promptManager: PromptWindowManager
 let meetingDetector: MeetingDetector
+let startupInitPromise: Promise<void> | null = null
+let pendingDeepLinkUrl: string | null = null
+
+function extractDeepLinkFromArgv(argv: string[]): string | null {
+  const prefix = `${AUTH_PROTOCOL}://`
+  return argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith(prefix)) ?? null
+}
+
+function registerAuthProtocolClient(): void {
+  try {
+    if (process.defaultApp) {
+      if (process.argv.length >= 2) {
+        app.setAsDefaultProtocolClient(AUTH_PROTOCOL, process.execPath, [resolve(process.argv[1])])
+      }
+    } else {
+      app.setAsDefaultProtocolClient(AUTH_PROTOCOL)
+    }
+  } catch (err) {
+    console.warn('[Auth] Failed to register custom protocol handler:', err)
+  }
+}
+
+async function handleDeepLinkUrl(rawUrl: string): Promise<void> {
+  if (!authManager) {
+    pendingDeepLinkUrl = rawUrl
+    return
+  }
+  const handled = await authManager.handleProtocolCallback(rawUrl)
+  if (handled) {
+    showMainWindow()
+  }
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.exit(0)
 } else {
-  app.on('second-instance', () => {
+  registerAuthProtocolClient()
+
+  app.on('second-instance', (_event, argv) => {
+    const deepLink = extractDeepLinkFromArgv(argv)
+    if (deepLink) {
+      void handleDeepLinkUrl(deepLink)
+    }
     showMainWindow()
+  })
+
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    void handleDeepLinkUrl(url)
   })
 }
 
@@ -228,12 +274,28 @@ function registerMediaProtocol(): void {
 
 function registerIpcHandlers(): void {
   // Auth
-  ipcMain.handle('auth:get-session', () => authManager.getSession())
-  ipcMain.handle('auth:sign-in', () =>
-    authManager.signIn(store.getSettings().consoleBaseUrl, mainWindow)
+  ipcMain.handle('auth:get-session', async () => {
+    if (startupInitPromise) await startupInitPromise
+    return authManager.getSession()
+  })
+  ipcMain.handle('auth:sign-in', (_e, method?: SignInMethod) =>
+    authManager.signIn(store.getSettings().consoleBaseUrl, mainWindow, method ?? 'browser')
   )
+  ipcMain.handle('auth:cancel-sign-in', () => {
+    authManager.cancelSignIn()
+  })
   ipcMain.handle('auth:sign-out', () => authManager.signOut())
   ipcMain.handle('auth:set-manual-token', (_e, token: string) => authManager.setManualToken(token))
+  ipcMain.handle('auth:callback-url', () => AUTH_CALLBACK_URL)
+
+  // Connectivity
+  ipcMain.handle('connectivity:get', async () => {
+    if (startupInitPromise) await startupInitPromise
+    return connectivityMonitor.getStatus()
+  })
+  ipcMain.handle('connectivity:report-browser-status', (_e, online: boolean) =>
+    connectivityMonitor.checkNow(online)
+  )
 
   // AiMY Metadata
   ipcMain.handle('aimy:list-groups', () => apiClient.listGroups())
@@ -243,8 +305,18 @@ function registerIpcHandlers(): void {
   // Settings
   ipcMain.handle('settings:get', () => store.getSettings())
   ipcMain.handle('settings:update', (_e, patch: Partial<AppSettings>) => {
+    const prev = store.getSettings()
     const updated = store.updateSettings(patch)
     meetingDetector.setEnabled(updated.detectMeetings)
+    if (
+      updated.defaultGroupId &&
+      updated.defaultGroupId !== prev.defaultGroupId &&
+      updated.autoSyncAfterRecording &&
+      connectivityMonitor.isOnline() &&
+      authManager.getSession().authenticated
+    ) {
+      void syncManager.syncAllPending({ auto: true })
+    }
     return updated
   })
 
@@ -258,7 +330,12 @@ function registerIpcHandlers(): void {
     async (_e, id: string, audioBytes: Uint8Array, inputExt: string, durationSeconds: number, notes?: string) => {
       const saved = await store.saveCapturedAudio(id, audioBytes, inputExt, durationSeconds, notes)
       const settings = store.getSettings()
-      if (settings.autoSyncAfterRecording && authManager.getSession().authenticated && (saved.groupId || settings.defaultGroupId)) {
+      if (
+        settings.autoSyncAfterRecording &&
+        connectivityMonitor.isOnline() &&
+        authManager.getSession().authenticated &&
+        (saved.groupId || settings.defaultGroupId)
+      ) {
         void syncManager.syncRecording(saved.id)
       }
       return saved
@@ -351,13 +428,23 @@ if (gotLock) {
   app.whenReady().then(() => {
     app.setAppUserModelId('com.flairstech.aimy.meetings')
 
-    authManager = new AuthManager()
     store = new RecorderStore()
+    connectivityMonitor = new ConnectivityMonitor(() => store.getSettings().consoleBaseUrl)
+    authManager = new AuthManager(() => connectivityMonitor.isOnline())
     apiClient = new AimyApiClient(
       () => store.getSettings().apiBaseUrl,
-      () => authManager.getValidToken()
+      () => authManager.getValidToken(),
+      {
+        onUnauthorized: () => authManager.handleUnauthorized(),
+        onNetworkError: () => connectivityMonitor.reportNetworkError()
+      }
     )
-    syncManager = new SyncManager(store, apiClient)
+    syncManager = new SyncManager(
+      store,
+      apiClient,
+      () => connectivityMonitor.isOnline(),
+      () => authManager.getSession().authenticated
+    )
     promptManager = new PromptWindowManager(preloadPath, rendererUrl, rendererHtml)
     meetingDetector = new MeetingDetector({
       onDetected: (meeting) => {
@@ -394,12 +481,61 @@ if (gotLock) {
 
     meetingDetector.setEnabled(store.getSettings().detectMeetings)
 
-    authManager.onChange((s) => broadcastToMain('auth:changed', s))
+    authManager.onChange((s) => {
+      broadcastToMain('auth:changed', s)
+      if (
+        s.authenticated &&
+        connectivityMonitor.isOnline() &&
+        store.getSettings().autoSyncAfterRecording
+      ) {
+        void syncManager.syncAllPending({ auto: true })
+        void syncManager.refreshAllStatuses()
+      }
+    })
+
+    connectivityMonitor.onChange((status) => {
+      broadcastToMain('connectivity:changed', status)
+      if (status.online) {
+        void authManager.onConnectivityRestored().then(() => {
+          if (
+            authManager.getSession().authenticated &&
+            store.getSettings().autoSyncAfterRecording
+          ) {
+            void syncManager.syncAllPending({ auto: true })
+            void syncManager.refreshAllStatuses()
+          }
+        })
+      }
+    })
+
+    connectivityMonitor.onWake(() => {
+      if (connectivityMonitor.isOnline()) {
+        void authManager.onConnectivityRestored()
+      }
+    })
+
     store.onRecordingsChange((items) => {
       broadcastToMain('recordings:updated', items)
       updateTray()
     })
     store.onSettingsChange((settings) => broadcastToMain('settings:updated', settings))
+
+    // Run initial reachability probe + silent token refresh concurrently while window loads
+    startupInitPromise = connectivityMonitor
+      .checkNow()
+      .then(() => authManager.initialize())
+      .then(() => {
+        if (
+          connectivityMonitor.isOnline() &&
+          authManager.getSession().authenticated &&
+          store.getSettings().autoSyncAfterRecording
+        ) {
+          void syncManager.syncAllPending({ auto: true })
+        }
+      })
+      .catch((err) => {
+        console.warn('[Init] Startup connectivity/auth initialization failed:', err)
+      })
 
     registerMediaProtocol()
     setupMediaPermissions()
@@ -414,13 +550,22 @@ if (gotLock) {
     tray.on('click', () => showMainWindow())
     updateTray()
 
+    connectivityMonitor.start()
     meetingDetector.start()
     syncManager.start()
+
+    const startupDeepLink = pendingDeepLinkUrl ?? extractDeepLinkFromArgv(process.argv)
+    if (startupDeepLink) {
+      pendingDeepLinkUrl = null
+      void handleDeepLinkUrl(startupDeepLink)
+    }
   })
 }
 
 app.on('before-quit', () => {
   isQuitting = true
+  connectivityMonitor?.stop()
+  authManager?.dispose()
   meetingDetector?.stop()
   syncManager?.stop()
   promptManager?.hide()

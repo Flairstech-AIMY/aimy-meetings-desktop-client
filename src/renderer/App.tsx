@@ -34,12 +34,10 @@ import {
   type AppSettings,
   type AuthSession,
   type DetectedMeeting,
-  type LiveTranscriptSegment,
   type RecordingItem,
+  type SignInMethod,
   type StartRecordingRequest,
-  type UpdateRecordingPatch,
-  type WhisperModelId,
-  type WhisperModelStatus
+  type UpdateRecordingPatch
 } from '@shared/types'
 import { startAudioCapture, type ActiveCaptureSession } from './lib/audioCapture'
 import {
@@ -52,6 +50,7 @@ import { LiveRecorderBar } from './components/LiveRecorderBar'
 import { RecordingCard } from './components/RecordingCard'
 import { RecordingDetail } from './components/RecordingDetail'
 import { SettingsDialog } from './components/SettingsDialog'
+import { SignInPromptDialog } from './components/SignInPromptDialog'
 
 type SidebarFilter = 'all' | 'pending' | 'synced'
 
@@ -65,13 +64,15 @@ interface LiveState {
   isPaused: boolean
   hasSystemAudio: boolean
   hasMicAudio: boolean
-  liveTranscriptionReady: boolean
-  liveTranscriptionNote?: string | null
-  transcriptSegments: LiveTranscriptSegment[]
 }
 
 export function App() {
   const [auth, setAuth] = useState<AuthSession>({ authenticated: false })
+  const [online, setOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  )
+  const [initialLoaded, setInitialLoaded] = useState(false)
+  const [authCallbackUrl, setAuthCallbackUrl] = useState('aimy-meetings://auth/callback')
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [groups, setGroups] = useState<AimyGroup[]>([])
   const [recordings, setRecordings] = useState<RecordingItem[]>([])
@@ -79,12 +80,14 @@ export function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all')
   const [search, setSearch] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [signingIn, setSigningIn] = useState(false)
+  const [signInModalOpen, setSignInModalOpen] = useState(false)
+  const [localOnlyDismissed, setLocalOnlyDismissed] = useState(false)
+  const [signingInMethod, setSigningInMethod] = useState<SignInMethod | null>(null)
+  const [signInError, setSignInError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [syncingAll, setSyncingAll] = useState(false)
   const [ffmpegAvailable, setFfmpegAvailable] = useState(true)
   const [deepFilterAvailable, setDeepFilterAvailable] = useState(false)
-  const [whisperModels, setWhisperModels] = useState<WhisperModelStatus[]>([])
   const [liveMeeting, setLiveMeeting] = useState<DetectedMeeting | null>(null)
   const [ignoredInAppMeetingId, setIgnoredInAppMeetingId] = useState<string | null>(null)
 
@@ -97,31 +100,64 @@ export function App() {
   settingsRef.current = settings
   const groupsRef = useRef<AimyGroup[]>(groups)
   groupsRef.current = groups
+  const authRef = useRef<AuthSession>(auth)
+  authRef.current = auth
+  const onlineRef = useRef<boolean>(online)
+  onlineRef.current = online
+  const signInAttemptRef = useRef(0)
 
   // Initial load + IPC subscriptions
   useEffect(() => {
     void Promise.all([
       window.aimyDesktop.getAuthSession(),
+      window.aimyDesktop.getConnectivityStatus(),
+      window.aimyDesktop.getAuthCallbackUrl(),
       window.aimyDesktop.getSettings(),
       window.aimyDesktop.listRecordings(),
       window.aimyDesktop.checkFfmpegAvailable(),
       window.aimyDesktop.checkDeepFilterAvailable(),
-      window.aimyDesktop.listWhisperModels(),
       window.aimyDesktop.getLiveMeeting()
-    ]).then(([session, loadedSettings, loadedRecs, hasFfmpeg, hasDf, models, activeMeeting]) => {
-      setAuth(session)
-      setSettings(loadedSettings)
-      setRecordings(loadedRecs)
-      setFfmpegAvailable(hasFfmpeg)
-      setDeepFilterAvailable(hasDf)
-      setWhisperModels(models)
-      setLiveMeeting(activeMeeting)
-      if (loadedRecs.length > 0) {
-        setSelectedId((prev) => prev ?? loadedRecs[0].id)
+    ]).then(
+      ([
+        session,
+        connectivity,
+        callbackUrl,
+        loadedSettings,
+        loadedRecs,
+        hasFfmpeg,
+        hasDf,
+        activeMeeting
+      ]) => {
+        setAuth(session)
+        setOnline(connectivity.online)
+        setAuthCallbackUrl(callbackUrl)
+        setSettings(loadedSettings)
+        setRecordings(loadedRecs)
+        setFfmpegAvailable(hasFfmpeg)
+        setDeepFilterAvailable(hasDf)
+        setLiveMeeting(activeMeeting)
+        if (loadedRecs.length > 0) {
+          setSelectedId((prev) => prev ?? loadedRecs[0].id)
+        }
+        setInitialLoaded(true)
+      }
+    )
+
+    const unsubAuth = window.aimyDesktop.onAuthChanged((next) => {
+      setAuth(next)
+      if (next.authenticated) {
+        setSignInModalOpen(false)
+        setLocalOnlyDismissed(false)
+        setSigningInMethod(null)
+        setSignInError(null)
+      } else if (next.reason === 'expired' || next.reason === 'signed-out') {
+        setLocalOnlyDismissed(false)
+        setSignInError(null)
       }
     })
-
-    const unsubAuth = window.aimyDesktop.onAuthChanged((next) => setAuth(next))
+    const unsubConnectivity = window.aimyDesktop.onConnectivityChanged((status) => {
+      setOnline(status.online)
+    })
     const unsubRecs = window.aimyDesktop.onRecordingsUpdated((next) => {
       setRecordings(next)
       setSelectedId((prev) => {
@@ -136,31 +172,49 @@ export function App() {
         setIgnoredInAppMeetingId(null)
       }
     })
-    const unsubWhisperDl = window.aimyDesktop.onWhisperDownloadProgress((models) => {
-      setWhisperModels(models)
-    })
-    const unsubLiveSeg = window.aimyDesktop.onLiveTranscriptSegment((seg) => {
-      setLive((prev) =>
-        prev ? { ...prev, transcriptSegments: [...prev.transcriptSegments, seg] } : null
-      )
-    })
+
+    const handleBrowserOnline = (): void => {
+      void window.aimyDesktop.reportBrowserOnlineStatus(true).then((s) => setOnline(s.online))
+    }
+    const handleBrowserOffline = (): void => {
+      setOnline(false)
+      void window.aimyDesktop.reportBrowserOnlineStatus(false).then((s) => setOnline(s.online))
+    }
+    window.addEventListener('online', handleBrowserOnline)
+    window.addEventListener('offline', handleBrowserOffline)
 
     return () => {
       unsubAuth()
+      unsubConnectivity()
       unsubRecs()
       unsubSettings()
       unsubLiveMeeting()
-      unsubWhisperDl()
-      unsubLiveSeg()
+      window.removeEventListener('online', handleBrowserOnline)
+      window.removeEventListener('offline', handleBrowserOffline)
     }
   }, [])
 
-  // Load groups whenever authenticated
+  // Auto-prompt sign-in on startup, logout, or token expiry when online (suppressed offline / local-only)
+  useEffect(() => {
+    if (!initialLoaded) return
+    if (auth.authenticated) {
+      setSignInModalOpen(false)
+      return
+    }
+    if (online && !localOnlyDismissed) {
+      setSignInModalOpen(true)
+    } else if (!online && !signingInMethod) {
+      setSignInModalOpen(false)
+    }
+  }, [initialLoaded, auth.authenticated, online, localOnlyDismissed, signingInMethod])
+
+  // Load groups whenever authenticated and online
   useEffect(() => {
     if (!auth.authenticated) {
       setGroups([])
       return
     }
+    if (!online) return
     let active = true
     void window.aimyDesktop
       .listGroups()
@@ -177,7 +231,7 @@ export function App() {
     return () => {
       active = false
     }
-  }, [auth.authenticated])
+  }, [auth.authenticated, online])
 
   // Elapsed timer while recording
   useEffect(() => {
@@ -206,26 +260,13 @@ export function App() {
     )
 
     try {
-      let liveTxReady = false
-      let liveTxNote: string | null = null
-      if (currentSettings.liveTranscription) {
-        const res = await window.aimyDesktop.startLiveTranscription()
-        liveTxReady = res.ready
-        liveTxNote = res.reason ?? null
-      }
-
       const capture = await startAudioCapture({
         captureSystemAudio: currentSettings.captureSystemAudio,
         captureMicrophone: currentSettings.captureMicrophone,
         micDeviceId: currentSettings.preferredMicDeviceId,
         onLevel: (level) => {
           setLive((prev) => (prev ? { ...prev, audioLevel: level } : null))
-        },
-        onSpeechChunk: liveTxReady
-          ? (pcm16, atSeconds) => {
-              void window.aimyDesktop.sendLiveAudioChunk(pcm16, atSeconds)
-            }
-          : undefined
+        }
       })
 
       const created = await window.aimyDesktop.createRecordingEntry({
@@ -253,10 +294,7 @@ export function App() {
         audioLevel: 0,
         isPaused: false,
         hasSystemAudio: capture.hasSystemAudio,
-        hasMicAudio: capture.hasMicAudio,
-        liveTranscriptionReady: liveTxReady,
-        liveTranscriptionNote: liveTxNote,
-        transcriptSegments: []
+        hasMicAudio: capture.hasMicAudio
       })
       await window.aimyDesktop.notifyRecordingState(true, title, meetingApp)
       toast('Recording started', {
@@ -286,25 +324,11 @@ export function App() {
         const result = await activeCapture.stop()
         captureRef.current = null
         setLive(null)
-        await window.aimyDesktop.stopLiveTranscription()
         await window.aimyDesktop.notifyRecordingState(false)
-
-        const formattedLiveTranscript =
-          activeLive.transcriptSegments.length > 0
-            ? activeLive.transcriptSegments
-                .map((s) => `[${formatDuration(s.atSeconds)}] ${s.text}`)
-                .join('\n')
-            : null
 
         await window.aimyDesktop.updateRecording(activeLive.recordingId, {
           title: activeLive.title.trim() || 'Meeting Recording',
-          notes: activeLive.notes,
-          ...(formattedLiveTranscript
-            ? {
-                localTranscript: formattedLiveTranscript,
-                transcriptSegments: activeLive.transcriptSegments
-              }
-            : {})
+          notes: activeLive.notes
         })
         const saved = await window.aimyDesktop.saveRecordingAudio(
           activeLive.recordingId,
@@ -314,11 +338,16 @@ export function App() {
           activeLive.notes
         )
 
-        toast(reason === 'meeting-ended' ? 'Meeting ended — recording saved' : 'Recording saved', {
-          sub:
-            saved.syncStatus === 'UPLOADING' || settingsRef.current.autoSyncAfterRecording
+        const subText = !onlineRef.current
+          ? 'Saved locally — will sync automatically once you are back online.'
+          : !authRef.current.authenticated
+            ? 'Saved locally — sign in to sync with AiMY Knowledge.'
+            : saved.syncStatus === 'UPLOADING' || settingsRef.current.autoSyncAfterRecording
               ? 'Saved locally and queued to sync with AiMY Knowledge.'
               : 'Saved locally — click Sync to AiMY when ready.'
+
+        toast(reason === 'meeting-ended' ? 'Meeting ended — recording saved' : 'Recording saved', {
+          sub: subText
         })
       } catch (err) {
         toast('Failed to save recording', {
@@ -346,24 +375,47 @@ export function App() {
     }
   }, [beginRecording, stopRecording])
 
-  const handleSignIn = async (): Promise<void> => {
-    setSigningIn(true)
+  const handleOpenSignInPrompt = (): void => {
+    setSignInError(null)
+    setSignInModalOpen(true)
+  }
+
+  const handleSignIn = async (method: SignInMethod = 'browser'): Promise<void> => {
+    if (!onlineRef.current) {
+      setSignInError('No internet connection detected. You can continue recording locally.')
+      return
+    }
+    const attemptId = ++signInAttemptRef.current
+    setSigningInMethod(method)
+    setSignInError(null)
     try {
-      const session = await window.aimyDesktop.signIn()
+      const session = await window.aimyDesktop.signIn(method)
+      if (signInAttemptRef.current !== attemptId) return
       setAuth(session)
       if (session.authenticated) {
+        setSignInModalOpen(false)
+        setLocalOnlyDismissed(false)
         toast('Signed in to AiMY Knowledge', {
           sub: session.user?.email || session.user?.name || 'Your session token is active.'
         })
       }
     } catch (err) {
-      toast('Sign-in was not completed', {
-        tone: 'err',
-        sub: err instanceof Error ? err.message : 'Please try signing in again.'
-      })
+      if (signInAttemptRef.current !== attemptId) return
+      const msg = err instanceof Error ? err.message : 'Please try signing in again.'
+      setSignInError(msg)
+      setSignInModalOpen(true)
     } finally {
-      setSigningIn(false)
+      if (signInAttemptRef.current === attemptId) {
+        setSigningInMethod(null)
+      }
     }
+  }
+
+  const handleCancelSignIn = async (): Promise<void> => {
+    signInAttemptRef.current += 1
+    setSigningInMethod(null)
+    setSignInError(null)
+    await window.aimyDesktop.cancelSignIn()
   }
 
   const handleSignOut = async (): Promise<void> => {
@@ -389,12 +441,26 @@ export function App() {
   }
 
   const handleSyncOne = async (id: string): Promise<void> => {
+    if (!online) {
+      toast('You are offline', {
+        sub: 'Recording stays saved locally and will sync automatically when connected.'
+      })
+      return
+    }
+    if (!auth.authenticated) {
+      handleOpenSignInPrompt()
+      return
+    }
     const updated = await window.aimyDesktop.syncRecording(id)
     if (updated.syncStatus === 'FAILED') {
       toast('Sync failed', {
         tone: 'err',
         sub: updated.error || 'Could not upload recording.',
         action: { label: 'Try again', onClick: () => void handleSyncOne(id) }
+      })
+    } else if (updated.syncStatus === 'LOCAL_PENDING') {
+      toast('Saved locally for sync', {
+        sub: updated.error || 'Will retry syncing automatically once connected and signed in.'
       })
     } else if (updated.syncStatus === 'SYNCED') {
       toast('Synced to AiMY Knowledge', {
@@ -419,11 +485,14 @@ export function App() {
   }
 
   const handleSyncAllPending = async (): Promise<void> => {
-    if (!auth.authenticated) {
-      toast('Sign in first', {
-        tone: 'err',
-        sub: 'Sign in with your AiMY account before syncing recordings.'
+    if (!online) {
+      toast('You are offline', {
+        sub: 'Local recordings will sync automatically once your internet connection returns.'
       })
+      return
+    }
+    if (!auth.authenticated) {
+      handleOpenSignInPrompt()
       return
     }
     setSyncingAll(true)
@@ -480,7 +549,7 @@ export function App() {
         (r.groupName || '').toLowerCase().includes(q) ||
         r.notes.toLowerCase().includes(q) ||
         (r.aimySummary || '').toLowerCase().includes(q) ||
-        (r.localTranscript || '').toLowerCase().includes(q)
+        (r.aimyTranscript || '').toLowerCase().includes(q)
     )
   }, [recordings, filter, search])
 
@@ -520,6 +589,8 @@ export function App() {
           ) : settings.detectMeetings ? (
             <StatusPill state="online">Auto-detect</StatusPill>
           ) : null}
+
+          {!online && <StatusPill state="offline">Offline · Local-only</StatusPill>}
         </div>
 
         <div className="flex items-center gap-2.5">
@@ -576,8 +647,8 @@ export function App() {
             <Button
               variant="accent"
               size="sm"
-              loading={signingIn}
-              onClick={() => void handleSignIn()}
+              loading={Boolean(signingInMethod)}
+              onClick={handleOpenSignInPrompt}
             >
               <LogIn className="size-3.5" />
               Sign in
@@ -685,7 +756,7 @@ export function App() {
             </span>
 
             <div className="flex items-center gap-1">
-              {counts.leftToSync > 0 && auth.authenticated && (
+              {counts.leftToSync > 0 && auth.authenticated && online && (
                 <Button
                   variant="text"
                   size="sm"
@@ -699,7 +770,7 @@ export function App() {
               <IconButton
                 label="Refresh sync statuses"
                 size="sm"
-                disabled={!auth.authenticated || refreshing}
+                disabled={!auth.authenticated || !online || refreshing}
                 onClick={() => void handleRefreshStatuses()}
               >
                 <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
@@ -772,9 +843,6 @@ export function App() {
               isPaused={live.isPaused}
               hasSystemAudio={live.hasSystemAudio}
               hasMicAudio={live.hasMicAudio}
-              liveTranscriptionReady={live.liveTranscriptionReady}
-              liveTranscriptionNote={live.liveTranscriptionNote}
-              transcriptSegments={live.transcriptSegments}
               notes={live.notes}
               stopping={stoppingRecording}
               onTitleChange={(title) => setLive((prev) => (prev ? { ...prev, title } : null))}
@@ -829,25 +897,6 @@ export function App() {
                     })
                   }
                 }}
-                onTranscribeLocally={async (id: string) => {
-                  try {
-                    const updated = await window.aimyDesktop.transcribeRecordingLocally(id)
-                    toast('On-device transcription finished', {
-                      sub: updated.localTranscript
-                        ? `Captured ${updated.transcriptSegments?.length ?? 1} speech segments locally.`
-                        : 'Silero VAD found no speech segments in this recording.'
-                    })
-                  } catch (err) {
-                    toast('Local transcription failed', {
-                      tone: 'err',
-                      sub: err instanceof Error ? err.message : 'Download a Whisper model in Settings.'
-                    })
-                  }
-                }}
-                onSyncTranscriptToAimy={async (id: string) => {
-                  await window.aimyDesktop.updateRecording(id, { uploadMode: 'transcript-json' })
-                  await handleSyncOne(id)
-                }}
                 onTranscribeClip={async (id: string) => {
                   try {
                     const text = await window.aimyDesktop.transcribeQuickClip(id)
@@ -892,15 +941,31 @@ export function App() {
         </section>
       </main>
 
+      <SignInPromptDialog
+        open={signInModalOpen}
+        reason={auth.reason}
+        lastUserEmail={auth.user?.email}
+        pendingCount={counts.leftToSync}
+        online={online}
+        signingInMethod={signingInMethod}
+        error={signInError}
+        onSignIn={handleSignIn}
+        onCancelSignIn={handleCancelSignIn}
+        onContinueLocalOnly={() => {
+          setLocalOnlyDismissed(true)
+          setSignInModalOpen(false)
+        }}
+      />
+
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         settings={settings}
         groups={groups}
         isAuthenticated={auth.authenticated}
+        authCallbackUrl={authCallbackUrl}
         ffmpegAvailable={ffmpegAvailable}
         deepFilterAvailable={deepFilterAvailable}
-        whisperModels={whisperModels}
         onSaveSettings={async (patch) => {
           const next = await window.aimyDesktop.updateSettings(patch)
           setSettings(next)
@@ -914,25 +979,6 @@ export function App() {
           toast('Meeting prompt triggered', {
             sub: 'Look at the bottom-right corner of your screen.'
           })
-        }}
-        onDownloadWhisperModel={async (id: WhisperModelId) => {
-          try {
-            const models = await window.aimyDesktop.downloadWhisperModel(id)
-            setWhisperModels(models)
-            toast('Whisper model downloaded', {
-              sub: 'Ready for on-device Arabic & English live transcription.'
-            })
-          } catch (err) {
-            toast('Model download failed', {
-              tone: 'err',
-              sub: err instanceof Error ? err.message : 'Check your internet connection.'
-            })
-          }
-        }}
-        onDeleteWhisperModel={async (id: WhisperModelId) => {
-          const models = await window.aimyDesktop.deleteWhisperModel(id)
-          setWhisperModels(models)
-          toast('Whisper model removed')
         }}
       />
 

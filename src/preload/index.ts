@@ -3,9 +3,11 @@ import type {
   AimyDesktopAPI,
   AppSettings,
   AuthSession,
+  ConnectivityStatus,
   CreateRecordingInput,
   DetectedMeeting,
   RecordingItem,
+  SignInMethod,
   StartRecordingRequest,
   UpdateRecordingPatch
 } from '@shared/types'
@@ -19,9 +21,16 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 const api: AimyDesktopAPI = {
   // Auth
   getAuthSession: () => ipcRenderer.invoke('auth:get-session'),
-  signIn: () => ipcRenderer.invoke('auth:sign-in'),
+  signIn: (method?: SignInMethod) => ipcRenderer.invoke('auth:sign-in', method),
+  cancelSignIn: () => ipcRenderer.invoke('auth:cancel-sign-in'),
   signOut: () => ipcRenderer.invoke('auth:sign-out'),
   setManualToken: (token: string) => ipcRenderer.invoke('auth:set-manual-token', token),
+  getAuthCallbackUrl: () => ipcRenderer.invoke('auth:callback-url'),
+
+  // Connectivity
+  getConnectivityStatus: () => ipcRenderer.invoke('connectivity:get'),
+  reportBrowserOnlineStatus: (online: boolean) =>
+    ipcRenderer.invoke('connectivity:report-browser-status', online),
 
   // AiMY Workspace metadata
   listGroups: () => ipcRenderer.invoke('aimy:list-groups'),
@@ -74,6 +83,8 @@ const api: AimyDesktopAPI = {
 
   // Subscriptions
   onAuthChanged: (cb: (session: AuthSession) => void) => subscribe('auth:changed', cb),
+  onConnectivityChanged: (cb: (status: ConnectivityStatus) => void) =>
+    subscribe('connectivity:changed', cb),
   onRecordingsUpdated: (cb: (recordings: RecordingItem[]) => void) =>
     subscribe('recordings:updated', cb),
   onSettingsUpdated: (cb: (settings: AppSettings) => void) => subscribe('settings:updated', cb),

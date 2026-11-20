@@ -4,11 +4,21 @@ export interface AuthUser {
   email?: string
 }
 
+export type AuthStateReason = 'initial' | 'signed-in' | 'signed-out' | 'expired'
+
+export type SignInMethod = 'browser' | 'embedded'
+
+export interface ConnectivityStatus {
+  online: boolean
+  checkedAt: number
+}
+
 export interface AuthSession {
   authenticated: boolean
   user?: AuthUser
   expiresAt?: number | null
   hasRefreshToken?: boolean
+  reason?: AuthStateReason
 }
 
 export interface AimyGroup {
@@ -159,9 +169,15 @@ export interface StartRecordingRequest {
 export interface AimyDesktopAPI {
   // Auth
   getAuthSession: () => Promise<AuthSession>
-  signIn: () => Promise<AuthSession>
+  signIn: (method?: SignInMethod) => Promise<AuthSession>
+  cancelSignIn: () => Promise<void>
   signOut: () => Promise<AuthSession>
   setManualToken: (token: string) => Promise<AuthSession>
+  getAuthCallbackUrl: () => Promise<string>
+
+  // Connectivity
+  getConnectivityStatus: () => Promise<ConnectivityStatus>
+  reportBrowserOnlineStatus: (online: boolean) => Promise<ConnectivityStatus>
 
   // AiMY Workspace metadata
   listGroups: () => Promise<AimyGroup[]>
@@ -215,6 +231,7 @@ export interface AimyDesktopAPI {
 
   // Subscriptions
   onAuthChanged: (cb: (session: AuthSession) => void) => () => void
+  onConnectivityChanged: (cb: (status: ConnectivityStatus) => void) => () => void
   onRecordingsUpdated: (cb: (recordings: RecordingItem[]) => void) => () => void
   onSettingsUpdated: (cb: (settings: AppSettings) => void) => () => void
   onMeetingDetected: (cb: (meeting: DetectedMeeting) => void) => () => void

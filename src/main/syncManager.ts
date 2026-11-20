@@ -1,7 +1,7 @@
 import { Notification, shell } from 'electron'
 import { existsSync } from 'fs'
 import type { RecordingItem } from '@shared/types'
-import { AimyApiClient, AimyApiError, buildAimyDocumentUrl } from './aimyApi'
+import { AimyApiClient, AimyApiError, buildAimyDocumentUrl, isNetworkError } from './aimyApi'
 import { getAppIconPng } from './appIcons'
 import { RecorderStore } from './recorderStore'
 
@@ -14,7 +14,9 @@ export class SyncManager {
 
   constructor(
     private store: RecorderStore,
-    private api: AimyApiClient
+    private api: AimyApiClient,
+    private isOnline: () => boolean = () => true,
+    private isAuthenticated: () => boolean = () => true
   ) {}
 
   start(): void {
@@ -40,6 +42,22 @@ export class SyncManager {
 
     const item = this.store.getRecording(id)
     if (!item) throw new Error(`Recording not found: ${id}`)
+
+    if (!this.isOnline()) {
+      return this.store.patchRecording(id, {
+        syncStatus: 'LOCAL_PENDING',
+        uploadProgress: 0,
+        error: 'Offline — saved locally and will sync automatically once connected.'
+      })
+    }
+
+    if (!this.isAuthenticated()) {
+      return this.store.patchRecording(id, {
+        syncStatus: 'LOCAL_PENDING',
+        uploadProgress: 0,
+        error: 'Sign in to AiMY Knowledge to sync this recording.'
+      })
+    }
 
     const settings = this.store.getSettings()
     const groupId = item.groupId ?? settings.defaultGroupId
@@ -151,11 +169,23 @@ export class SyncManager {
       }
       return updated
     } catch (err) {
+      if (isNetworkError(err) || !this.isOnline()) {
+        return this.store.patchRecording(id, {
+          syncStatus: 'LOCAL_PENDING',
+          uploadProgress: 0,
+          error: 'Connection interrupted — saved locally and will sync automatically when online.'
+        })
+      }
+      if (err instanceof AimyApiError && err.status === 401) {
+        return this.store.patchRecording(id, {
+          syncStatus: 'LOCAL_PENDING',
+          uploadProgress: 0,
+          error: 'Your AiMY session expired — sign in to sync this recording.'
+        })
+      }
       const message =
         err instanceof AimyApiError
-          ? err.status === 401
-            ? 'Your AiMY session expired. Sign in again and retry sync.'
-            : err.detail
+          ? err.detail
           : err instanceof Error
             ? err.message
             : 'Sync failed unexpectedly.'
@@ -169,10 +199,20 @@ export class SyncManager {
     }
   }
 
-  async syncAllPending(): Promise<{ started: number }> {
-    const pending = this.store
-      .listRecordings()
-      .filter((r) => r.syncStatus === 'LOCAL_PENDING' || r.syncStatus === 'FAILED')
+  async syncAllPending(options?: { auto?: boolean }): Promise<{ started: number }> {
+    if (!this.isOnline() || !this.isAuthenticated()) {
+      return { started: 0 }
+    }
+
+    const settings = this.store.getSettings()
+    const auto = Boolean(options?.auto)
+    const pending = this.store.listRecordings().filter((r) => {
+      if (auto) {
+        if (r.syncStatus !== 'LOCAL_PENDING') return false
+        return Boolean(r.groupId ?? settings.defaultGroupId)
+      }
+      return r.syncStatus === 'LOCAL_PENDING' || r.syncStatus === 'FAILED'
+    })
 
     let started = 0
     for (const item of pending) {
@@ -226,6 +266,7 @@ export class SyncManager {
 
   private async pollInFlightStatuses(includeSyncedWithoutBody = false): Promise<void> {
     if (this.polling) return
+    if (!this.isOnline() || !this.isAuthenticated()) return
     const candidates = this.store.listRecordings().filter((r) => {
       if (!r.aimyDocId) return false
       if (r.syncStatus === 'TRANSCRIBING' || r.syncStatus === 'READY_FOR_REVIEW') return true

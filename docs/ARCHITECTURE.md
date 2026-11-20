@@ -1,6 +1,6 @@
 # AiMY Meetings — Architecture & Technical Documentation
 
-**AiMY Meetings** is a desktop meeting recorder, on-device bilingual (Egyptian Arabic + English) transcription engine, neural audio enhancer, and **AiMY Knowledge** synchronization companion built with **Electron 35**, **React 19**, **TypeScript 5.8**, **Tailwind CSS 4**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
+**AiMY Meetings** is a desktop meeting recorder, neural audio enhancer, and **AiMY Knowledge** synchronization companion built with **Electron 35**, **React 19**, **TypeScript 5.8**, **Tailwind CSS 4**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
 
 ---
 
@@ -23,16 +23,12 @@ flowchart TB
         Detector["MeetingDetector (Windows ConsentStore + Win32 / macOS)"]
         Store["RecorderStore (JSON DB + Audio Files)"]
         Enhancer["AudioEnhancer (DeepFilterNet3 + FFmpeg)"]
-        Whisper["LocalWhisperManager (whisper-server / whisper-cli + Silero VAD)"]
         Auth["AuthManager (Cognito OAuth + safeStorage Encryption)"]
         Sync["SyncManager & AimyApiClient"]
     end
 
-    subgraph Native["Bundled Native Binaries & Models (resources/)"]
+    subgraph Native["Bundled Native Binaries (resources/)"]
         DF["resources/bin/deep-filter.exe (DeepFilterNet3)"]
-        WBin["resources/bin/whisper/Release/whisper-*.exe (OpenBLAS / Vulkan)"]
-        VAD["resources/models/ggml-silero-v5.1.2.bin"]
-        Models["resources/models/ggml-*.bin (On-Demand Whisper Models)"]
     end
 
     subgraph Cloud["AiMY Knowledge Cloud"]
@@ -47,14 +43,10 @@ flowchart TB
     API <--> Index
     Index --> Detector
     Index --> Store
-    Index --> Whisper
     Index --> Auth
     Index --> Sync
     Store --> Enhancer
     Enhancer --> DF
-    Whisper --> WBin
-    Whisper --> VAD
-    Whisper --> Models
     Auth <--> Cognito
     Auth <--> AimyConsole
     Sync <--> AimyAPI
@@ -76,12 +68,8 @@ aimy-meetings/
 ├── resources/
 │   ├── icon.ico / icon.png / icon.svg  # Application branding icons
 │   ├── tray-idle.png / tray-recording.png
-│   ├── bin/
-│   │   ├── deep-filter.exe             # DeepFilterNet3 48kHz full-band neural speech enhancer
-│   │   └── whisper/Release/            # whisper.cpp OpenBLAS + Vulkan binaries & DLLs
-│   └── models/
-│       ├── ggml-silero-v5.1.2.bin      # Bundled Silero VAD v5.1.2 model (840 KB)
-│       └── ggml-*.bin                  # On-demand Whisper Q5 models (downloaded in Settings)
+│   └── bin/
+│       └── deep-filter.exe             # DeepFilterNet3 48kHz full-band neural speech enhancer
 ├── scripts/
 │   └── package-release.ps1             # Standalone Windows x64 release packager & SHA256 generator
 ├── src/
@@ -90,8 +78,8 @@ aimy-meetings/
 │   │   ├── aimyApi.ts                  # Streaming multipart & JSON client for AiMY Knowledge API
 │   │   ├── appIcons.ts                 # NativeImage icon loader for window, tray & notifications
 │   │   ├── audioEnhancer.ts            # DeepFilterNet3 + FFmpeg loudness normalization pipeline
-│   │   ├── auth.ts                     # Cognito login window, token extraction, safeStorage & refresh
-│   │   ├── localWhisper.ts             # whisper-server / whisper-cli, Silero VAD & ar-EG hybrid builder
+│   │   ├── auth.ts                     # System-browser PKCE OAuth, embedded fallback, expiry monitor & safeStorage
+│   │   ├── connectivity.ts             # Online/offline & wake reachability monitor for local-first sync
 │   │   ├── meetingDetector.ts          # Active call detector (Teams, Zoom, Meet, Slack, Webex, Discord)
 │   │   ├── promptWindow.ts             # Always-on-top bottom-right meeting detection banner window
 │   │   ├── recorderStore.ts            # Persistent recordings/settings store & crash recovery
@@ -101,13 +89,14 @@ aimy-meetings/
 │   ├── renderer/
 │   │   ├── App.tsx                     # Main dashboard & meeting prompt router
 │   │   ├── components/
-│   │   │   ├── LiveRecorderBar.tsx     # Active recording controls, waveform & live transcript feed
+│   │   │   ├── LiveRecorderBar.tsx     # Active recording controls, waveform & live notes drawer
 │   │   │   ├── MeetingPrompt.tsx       # Notion-style bottom-right meeting detection banner
 │   │   │   ├── RecordingCard.tsx       # Sidebar list item with live status badges & progress
-│   │   │   ├── RecordingDetail.tsx     # Audio player, notes editor, local Whisper & AiMY sync actions
-│   │   │   └── SettingsDialog.tsx      # Workspace targets, Whisper model manager & audio devices
+│   │   │   ├── RecordingDetail.tsx     # Audio player, notes editor & AiMY sync actions
+│   │   │   ├── SettingsDialog.tsx      # Workspace targets & audio devices
+│   │   │   └── SignInPromptDialog.tsx  # Contextual sign-in modal with browser PKCE, built-in fallback & local-only mode
 │   │   └── lib/
-│   │       ├── audioCapture.ts         # WebAudio loopback + microphone mixer & 16kHz PCM chunker
+│   │       ├── audioCapture.ts         # WebAudio loopback + microphone mixer
 │   │       └── format.ts               # Timestamp, duration & file-size formatters
 │   └── shared/
 │       └── types.ts                    # Shared TypeScript interfaces, sync states & default settings
@@ -124,10 +113,8 @@ aimy-meetings/
 ### 3.1 Dual-Source Audio Capture & Broadcast Limiter (`src/renderer/lib/audioCapture.ts`)
 1. **System Loopback Capture**: Uses Electron's `session.defaultSession.setDisplayMediaRequestHandler` to grant Windows WASAPI loopback audio (`audio: 'loopback'`) via `navigator.mediaDevices.getDisplayMedia` without prompting the user for a screen picker.
 2. **Microphone Capture**: Requests the user's selected microphone with browser echo cancellation, noise suppression, and auto-gain control enabled.
-3. **Mixing & Broadcast Limiting**: Both streams feed into a 48 kHz `AudioContext` through per-channel gain nodes (`0.95` system gain, `1.0` microphone gain) and a master `DynamicsCompressorNode` (`threshold: -6 dB`, `ratio: 12:1`, `attack: 3 ms`, `release: 150 ms`) to prevent clipping when multiple participants speak simultaneously.
-4. **Parallel Outputs**:
-   - **`MediaRecorder`**: Encodes the mixed stream at 128 kbps (`audio/webm;codecs=opus` or `audio/mp4`).
-   - **Live 16 kHz PCM Chunker**: Downsamples mixed audio to 16 kHz 16-bit mono PCM slices every ~3.2 seconds (with energy gating) and streams them over IPC (`whisper:send-chunk`) to the local Whisper server.
+3. **Mixing & Broadcast Limiting**: Both streams feed into a 48 kHz `AudioContext` through per-channel gain nodes and a master `DynamicsCompressorNode` to prevent clipping when multiple participants speak simultaneously.
+4. **Output**: `MediaRecorder` encodes the mixed stream (`audio/webm;codecs=opus`).
 
 ### 3.2 Neural Speech Enhancement Pipeline (`src/main/audioEnhancer.ts`)
 When a recording finishes (or when an audio file is imported or manually enhanced), `RecorderStore` runs a three-stage mastering pipeline:
@@ -136,19 +123,7 @@ When a recording finishes (or when an audio file is imported or manually enhance
 3. **Speech Loudness Normalization & MP3 Encoding (FFmpeg)**: Applies dynamic audio normalization (`dynaudnorm=f=150:g=15:p=0.9:m=10`) and encodes to a clean 44.1 kHz mono `128 kbps` `.mp3` ready for AiMY ingestion.
 4. **Automatic Fallback**: If `deep-filter.exe` is unavailable, gracefully falls back to FFmpeg spectral FFT denoising (`highpass=f=80,afftdn=nf=-25,dynaudnorm=f=150:g=15:p=0.9:m=10`).
 
-### 3.3 On-Device Whisper + Silero VAD Engine (`src/main/localWhisper.ts`)
-- **Models Supported**:
-  - `egyptian-turbo-q5_0` (**Whisper Large v3 Turbo — Egyptian AR + EN Q5**, ~547 MB): Hybrid fine-tuned model combining the standard `ggml-large-v3-turbo-q5_0.bin` encoder with the fine-tuned Egyptian Arabic + English code-switching decoder from `mohammedaly22/whisper-large-v3-turbo-egyptian-code-switching`, quantized on-device to `Q5_0` via `whisper-quantize.exe`.
-  - `large-v3-turbo-q5_0` (**Whisper Large v3 Turbo — Base Q5**, ~547 MB): Standard multilingual OpenAI Whisper Large v3 Turbo quantized to 5-bit.
-  - `small-q5_1` (**Whisper Small Q5**, ~181 MB): Lightweight fallback model for low-VRAM/CPU devices.
-- **Silero VAD Gating**: Uses `resources/models/ggml-silero-v5.1.2.bin` (`--vad --vad-threshold 0.45`) so non-speech intervals are skipped before hitting the Whisper decoder.
-- **Zero Idle Memory**: `whisper-server.exe` runs only during an active live-transcription recording and is terminated immediately when recording stops.
-- **Hallucination & Script-Lock Sanitizer (`cleanAndValidateTranscript`)**:
-  - Strips non-Arabic / non-Latin foreign script glitches (CJK, Cyrillic, Korean, Hebrew, etc.).
-  - Collapses elongated characters (`/(.)\1{3,}/gu`), Whisper stuttering dots, and 3+ repeated phrases.
-  - Blocks common silence hallucinations (`"Thank you"`, `"اشتركوا في القناة"`, bracketed music tags).
-
-### 3.4 Automatic Meeting Detection (`src/main/meetingDetector.ts`)
+### 3.3 Automatic Meeting Detection (`src/main/meetingDetector.ts`)
 - **Windows Detection Worker**: Spawns a hidden background PowerShell worker that polls every 2.5 seconds:
   1. Reads `HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\{microphone,webcam}` (both packaged and `NonPackaged` apps) where `LastUsedTimeStop == 0`.
   2. Enumerates visible top-level windows and their owning process names via P/Invoke `user32.dll` (`EnumWindows`, `IsWindowVisible`, `GetWindowText`, `GetWindowThreadProcessId`).
@@ -164,15 +139,16 @@ When a recording finishes (or when an audio file is imported or manually enhance
   - Displays a non-intrusive bottom-right floating prompt (`PromptWindowManager`) or automatically starts recording if `autoRecordOnMeeting` is enabled.
   - Automatically stops recording when the meeting call ends (`autoStopOnMeetingEnd`) after 3 consecutive end-of-call polls (~7.5 seconds).
 
-### 3.5 AiMY Knowledge Authentication & Sync State Machine (`src/main/auth.ts`, `src/main/syncManager.ts`)
+### 3.4 AiMY Knowledge Authentication, Offline-First & Sync State Machine (`src/main/auth.ts`, `src/main/connectivity.ts`, `src/main/syncManager.ts`)
 - **Authentication**:
-  - Opens an isolated `persist:aimy-auth` Electron `BrowserWindow` pointed at `${consoleBaseUrl}/console`.
-  - Captures the Cognito `id_token`, `access_token`, and `refresh_token` via both `webRequest.onBeforeSendHeaders` and OIDC `localStorage`/`sessionStorage` inspection.
-  - Encrypts credentials on disk at `%APPDATA%/aimy-meetings/auth-session.dat` using OS-level `safeStorage` (DPAPI on Windows, Keychain on macOS) and automatically refreshes tokens via Cognito `/oauth2/token` 60 seconds before expiry.
+  - **System Browser PKCE OAuth (Default)**: Registers the `aimy-meetings://` custom protocol (`aimy-meetings://auth/callback`) and opens AWS Cognito Hosted UI in the user's default browser using OAuth2 Authorization Code + PKCE (`S256`) so browser autofill, password managers, and existing SSO sessions work seamlessly.
+  - **Built-in Window Fallback**: Also supports an isolated `persist:aimy-auth` Electron `BrowserWindow` pointed at `${consoleBaseUrl}/console` (capturing tokens via `webRequest.onBeforeSendHeaders` and OIDC storage) in case the custom protocol callback isn't registered in Cognito yet.
+  - **Session Lifecycle & Auto-Prompt**: Encrypts credentials at `%APPDATA%/aimy-meetings/auth-session.dat` using OS-level `safeStorage`, proactively refreshes tokens 60 seconds before expiry, retries once on `401`, and prompts the user via an in-app modal on startup (when unauthenticated), sign-out, or token expiry — suppressed automatically while offline so local-first recording is never interrupted.
+  - **Local-First & Reconnect Sync**: `ConnectivityMonitor` combines `net.isOnline()`, reachability probes, and OS wake events. Recordings captured offline or while signed out remain `LOCAL_PENDING` and sync automatically once back online and authenticated.
   - Also supports manual JWT token entry in Settings.
 - **Sync Modes**:
   1. **`audio-recording` (Default)**: Streams the enhanced `.mp3` via multipart upload to `POST /processing/audio` (with automatic fallback to `POST /processing`) with real-time byte progress (`uploadProgress: 0..100`).
-  2. **`transcript-json`**: Uploads structured Markdown containing meeting metadata, user notes, and the local Whisper transcript to `POST /processing/json`.
+  2. **`transcript-json`**: Uploads structured Markdown containing meeting metadata and user notes to `POST /processing/json`.
 - **Recording Sync Lifecycle (`RecordingSyncStatus`)**:
 
 ```mermaid
@@ -200,10 +176,9 @@ All user data is stored in Electron's `app.getPath('userData')` directory (`%APP
 
 | File / Directory | Purpose |
 | :--- | :--- |
-| `settings.json` | Persisted `AppSettings` (target group, agents, audio devices, Whisper preferences) |
-| `recordings.json` | Metadata, sync status, notes, and transcript segments for all recordings |
+| `settings.json` | Persisted `AppSettings` (target group, agents, audio devices) |
+| `recordings.json` | Metadata, sync status, and notes for all recordings |
 | `recordings/<id>.mp3` | Enhanced mono 128 kbps MP3 audio files |
 | `auth-session.dat` | DPAPI / Keychain `safeStorage`-encrypted Cognito OAuth tokens |
-| `models/` | Fallback user-writable directory for downloaded Whisper `.bin` models |
 
 Audio playback in the renderer uses the custom privileged protocol `aimy-media://recording/<id>`, handled by `net.fetch(pathToFileURL(item.audioPath))` in the main process with full HTTP Range header support for instant scrubbing.

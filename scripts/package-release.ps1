@@ -68,14 +68,11 @@ $prodPkg | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $appDir 'packa
 Write-Host "==> Copying compiled application bundles (out/)..." -ForegroundColor Cyan
 Copy-Item -Path (Join-Path $projectRoot 'out') -Destination (Join-Path $appDir 'out') -Recurse -Force
 
-Write-Host "==> Copying icons, DeepFilterNet3, Whisper binaries, and Silero VAD..." -ForegroundColor Cyan
+Write-Host "==> Copying icons and DeepFilterNet3..." -ForegroundColor Cyan
 $resDest = Join-Path $appDir 'resources'
 $binDest = Join-Path $resDest 'bin'
-$whisperReleaseDest = Join-Path $binDest 'whisper\Release'
-$modelsDest = Join-Path $resDest 'models'
 
-New-Item -ItemType Directory -Path $whisperReleaseDest -Force | Out-Null
-New-Item -ItemType Directory -Path $modelsDest -Force | Out-Null
+New-Item -ItemType Directory -Path $binDest -Force | Out-Null
 
 # Copy top-level icons
 Get-ChildItem -Path (Join-Path $projectRoot 'resources') -File | ForEach-Object {
@@ -86,33 +83,6 @@ Get-ChildItem -Path (Join-Path $projectRoot 'resources') -File | ForEach-Object 
 $deepFilterSrc = Join-Path $projectRoot 'resources\bin\deep-filter.exe'
 if (Test-Path $deepFilterSrc) {
   Copy-Item -Path $deepFilterSrc -Destination (Join-Path $binDest 'deep-filter.exe') -Force
-}
-
-# Copy production whisper.cpp executables & DLLs (excluding test/demo binaries)
-$whisperSrcDir = Join-Path $projectRoot 'resources\bin\whisper\Release'
-$includedWhisperPatterns = @(
-  'whisper-cli.exe',
-  'whisper-server.exe',
-  'whisper-quantize.exe',
-  'whisper-stream.exe',
-  'whisper-vad-speech-segments.exe',
-  'whisper-bench.exe',
-  'whisper-command.exe',
-  'whisper-lsp.exe',
-  'whisper.dll',
-  'ggml*.dll',
-  'libopenblas.dll'
-)
-foreach ($pattern in $includedWhisperPatterns) {
-  Get-ChildItem -Path $whisperSrcDir -Filter $pattern -File -ErrorAction SilentlyContinue | ForEach-Object {
-    Copy-Item -Path $_.FullName -Destination (Join-Path $whisperReleaseDest $_.Name) -Force
-  }
-}
-
-# Copy Silero VAD model
-$vadSrc = Join-Path $projectRoot 'resources\models\ggml-silero-v5.1.2.bin'
-if (Test-Path $vadSrc) {
-  Copy-Item -Path $vadSrc -Destination (Join-Path $modelsDest 'ggml-silero-v5.1.2.bin') -Force
 }
 
 # Include user documentation at root of portable folder

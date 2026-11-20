@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Button,
+  CopyButton,
   Dialog,
   DialogContent,
   Field,
@@ -37,6 +38,7 @@ interface SettingsDialogProps {
   settings: AppSettings
   groups: AimyGroup[]
   isAuthenticated: boolean
+  authCallbackUrl: string
   ffmpegAvailable: boolean
   deepFilterAvailable: boolean
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<void>
@@ -52,6 +54,7 @@ export function SettingsDialog({
   settings,
   groups,
   isAuthenticated,
+  authCallbackUrl,
   ffmpegAvailable,
   deepFilterAvailable,
   onSaveSettings,
@@ -319,6 +322,18 @@ export function SettingsDialog({
                     value={draft.consoleBaseUrl}
                     onChange={(e) => setDraft((d) => ({ ...d, consoleBaseUrl: e.target.value }))}
                   />
+                </Field>
+              </div>
+
+              <div className="rounded-xl border border-hairline bg-sunken p-4">
+                <Field
+                  label="Browser sign-in callback URL"
+                  help="Register this URI under Allowed callback URLs on the AWS Cognito App Client to enable system-browser PKCE sign-in with autofill."
+                >
+                  <div className="flex items-center gap-2 pt-1">
+                    <Input value={authCallbackUrl} readOnly className="font-mono text-xs" />
+                    <CopyButton value={authCallbackUrl} what="the OAuth callback URL" />
+                  </div>
                 </Field>
               </div>
 

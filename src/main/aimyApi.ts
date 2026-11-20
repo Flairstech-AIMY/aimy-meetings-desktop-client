@@ -91,10 +91,55 @@ export class AimyApiError extends Error {
   }
 }
 
+const NETWORK_ERROR_CODES = new Set([
+  'ENOTFOUND',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'EAI_AGAIN',
+  'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET'
+])
+
+export function isNetworkError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  if (err instanceof AimyApiError) return false
+  const e = err as { code?: unknown; cause?: unknown; message?: unknown; name?: unknown }
+  if (typeof e.code === 'string' && NETWORK_ERROR_CODES.has(e.code)) return true
+  if (e.cause && typeof e.cause === 'object') {
+    const causeCode = (e.cause as { code?: unknown }).code
+    if (typeof causeCode === 'string' && NETWORK_ERROR_CODES.has(causeCode)) return true
+  }
+  if (typeof e.message === 'string') {
+    const msg = e.message.toLowerCase()
+    if (
+      msg.includes('fetch failed') ||
+      msg.includes('network') ||
+      msg.includes('getaddrinfo') ||
+      msg.includes('enotfound') ||
+      msg.includes('econnreset') ||
+      msg.includes('etimedout') ||
+      msg.includes('socket hang up')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+export interface AimyApiHooks {
+  onUnauthorized?: () => Promise<string | null>
+  onNetworkError?: () => void
+}
+
 export class AimyApiClient {
   constructor(
     private getBaseUrl: () => string,
-    private getToken: () => Promise<string | null>
+    private getToken: () => Promise<string | null>,
+    private hooks: AimyApiHooks = {}
   ) {}
 
   private async requireToken(): Promise<string> {
@@ -109,7 +154,7 @@ export class AimyApiClient {
     return `${this.getBaseUrl().replace(/\/$/, '')}${path}`
   }
 
-  private async jsonRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async jsonRequest<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
     const token = await this.requireToken()
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
@@ -119,13 +164,29 @@ export class AimyApiClient {
       headers['Content-Type'] = 'application/json'
     }
 
-    const res = await fetch(this.url(path), { ...init, headers })
+    let res: Response
+    try {
+      res = await fetch(this.url(path), { ...init, headers })
+    } catch (err) {
+      if (isNetworkError(err)) {
+        this.hooks.onNetworkError?.()
+      }
+      throw err
+    }
+
     const text = await res.text()
     let data: unknown = null
     try {
       data = text ? JSON.parse(text) : null
     } catch {
       data = text
+    }
+
+    if (res.status === 401 && !retried && this.hooks.onUnauthorized) {
+      const freshToken = await this.hooks.onUnauthorized()
+      if (freshToken) {
+        return this.jsonRequest<T>(path, init, true)
+      }
     }
 
     if (!res.ok) {
@@ -215,15 +276,26 @@ export class AimyApiClient {
     }
   }
 
-  async transcribeVoiceClip(filePath: string): Promise<string> {
+  async transcribeVoiceClip(filePath: string, retried = false): Promise<string> {
     const token = await this.requireToken()
-    const res = await this.streamMultipartUploadRaw(
-      '/v2/voice/transcriptions',
-      token,
-      filePath,
-      basename(filePath),
-      {}
-    )
+    let res: { status: number; data: unknown }
+    try {
+      res = await this.streamMultipartUploadRaw(
+        '/v2/voice/transcriptions',
+        token,
+        filePath,
+        basename(filePath),
+        {}
+      )
+    } catch (err) {
+      if (err instanceof AimyApiError && err.status === 401 && !retried && this.hooks.onUnauthorized) {
+        const freshToken = await this.hooks.onUnauthorized()
+        if (freshToken) {
+          return this.transcribeVoiceClip(filePath, true)
+        }
+      }
+      throw err
+    }
     const text = (res.data as { text?: string } | null)?.text
     if (typeof text !== 'string') {
       throw new Error('Transcription response did not contain text.')
@@ -282,16 +354,31 @@ export class AimyApiClient {
     filePath: string,
     fileName: string,
     fields: Record<string, string>,
-    onProgress?: (percent: number) => void
+    onProgress?: (percent: number) => void,
+    retried = false
   ): Promise<{ documentId: number; status: number; raw: unknown }> {
-    const { status, data } = await this.streamMultipartUploadRaw(
-      path,
-      token,
-      filePath,
-      fileName,
-      fields,
-      onProgress
-    )
+    let status: number
+    let data: unknown
+    try {
+      const res = await this.streamMultipartUploadRaw(
+        path,
+        token,
+        filePath,
+        fileName,
+        fields,
+        onProgress
+      )
+      status = res.status
+      data = res.data
+    } catch (err) {
+      if (err instanceof AimyApiError && err.status === 401 && !retried && this.hooks.onUnauthorized) {
+        const freshToken = await this.hooks.onUnauthorized()
+        if (freshToken) {
+          return this.streamMultipartUpload(path, freshToken, filePath, fileName, fields, onProgress, true)
+        }
+      }
+      throw err
+    }
     const record = data as Record<string, unknown> | null
     const docId = Number(record?.document_id ?? record?.doc_id ?? record?.id)
     if (!Number.isFinite(docId) || docId <= 0) {
@@ -378,7 +465,12 @@ export class AimyApiClient {
         }
       )
 
-      req.on('error', (err) => reject(err))
+      req.on('error', (err) => {
+        if (isNetworkError(err)) {
+          this.hooks.onNetworkError?.()
+        }
+        reject(err)
+      })
 
       let uploadedBytes = 0
       let lastPercent = -1
