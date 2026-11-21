@@ -87,7 +87,7 @@ export function createTauriAimyDesktopAPI(): AimyDesktopAPI {
     getRecordingAudioUrl: async (id: string) => {
       const path = await invoke<string | null>('recordings_audio_path', { id })
       if (!path) return null
-      return `${convertFileSrc(path)}?t=${Date.now()}`
+      return convertFileSrc(path)
     },
     enhanceRecordingAudio: (id: string) => invoke<RecordingItem>('recordings_enhance_audio', { id }),
     revealRecordingInFolder: (id: string) => invoke<void>('recordings_reveal', { id }),

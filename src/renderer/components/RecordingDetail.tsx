@@ -107,7 +107,7 @@ export function RecordingDetail({
     return () => {
       active = false
     }
-  }, [recording.id, recording.audioPath, recording.updatedAt])
+  }, [recording.id, recording.audioPath, recording.fileSizeBytes, recording.audioEnhanced])
 
   useEffect(() => {
     if (!isAuthenticated || !recording.groupId) {
@@ -487,10 +487,10 @@ export function RecordingDetail({
         {/* Full-Width Uncluttered Audio Player */}
         {recording.audioPath && (
           <CallRecording
-            key={audioUrl ?? recording.id}
+            key={`${recording.id}:${recording.audioPath}:${recording.fileSizeBytes ?? 0}:${recording.audioEnhanced ? 1 : 0}`}
             id={recording.id}
             seconds={Math.max(1, recording.durationSeconds || 1)}
-            src={audioUrl ?? undefined}
+            src={audioUrl ? `${audioUrl}?v=${recording.fileSizeBytes ?? 0}-${recording.audioEnhanced ? 1 : 0}` : undefined}
             kind="call"
           />
         )}

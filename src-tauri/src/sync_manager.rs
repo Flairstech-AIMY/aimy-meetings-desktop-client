@@ -512,20 +512,36 @@ impl SyncManager {
         }
 
         if ps == "READY_FOR_REVIEW" {
-            let updated = self.store.mutate_recording(&item.id, |r| {
-                r.aimy_document_url = doc_url;
-                r.aimy_processing_status = Some(ps);
-                if remote.summary.is_some() {
-                    r.aimy_summary = remote.summary.clone();
-                }
-                if remote.body.is_some() {
-                    r.aimy_transcript = remote.body.clone();
-                }
-                r.lifecycle = synced_lifecycle;
-                r.is_personal = synced_personal;
-                r.sync_status = "READY_FOR_REVIEW".to_string();
-                r.error = remote.last_error.clone();
-            })?;
+            let next_summary = remote.summary.clone().or_else(|| item.aimy_summary.clone());
+            let next_transcript = remote.body.clone().or_else(|| item.aimy_transcript.clone());
+            let next_error = remote.last_error.clone();
+            let unchanged = item.sync_status == "READY_FOR_REVIEW"
+                && item.aimy_document_url == doc_url
+                && item.aimy_processing_status.as_deref() == Some("READY_FOR_REVIEW")
+                && item.aimy_summary == next_summary
+                && item.aimy_transcript == next_transcript
+                && item.lifecycle == synced_lifecycle
+                && item.is_personal == synced_personal
+                && item.error == next_error;
+
+            let updated = if unchanged {
+                item.clone()
+            } else {
+                self.store.mutate_recording(&item.id, |r| {
+                    r.aimy_document_url = doc_url;
+                    r.aimy_processing_status = Some(ps);
+                    if remote.summary.is_some() {
+                        r.aimy_summary = remote.summary.clone();
+                    }
+                    if remote.body.is_some() {
+                        r.aimy_transcript = remote.body.clone();
+                    }
+                    r.lifecycle = synced_lifecycle;
+                    r.is_personal = synced_personal;
+                    r.sync_status = "READY_FOR_REVIEW".to_string();
+                    r.error = next_error;
+                })?
+            };
             if settings.auto_index_after_transcription {
                 return Box::pin(self.index_recording(&item.id)).await;
             }
@@ -549,6 +565,14 @@ impl SyncManager {
         }
 
         if ps == "PENDING" || ps == "PULLED" || ps == "PROCESSING" {
+            if item.sync_status == "TRANSCRIBING"
+                && item.aimy_document_url == doc_url
+                && item.aimy_processing_status.as_deref() == Some(ps.as_str())
+                && item.lifecycle == synced_lifecycle
+                && item.is_personal == synced_personal
+            {
+                return Ok(item.clone());
+            }
             return self.store.mutate_recording(&item.id, |r| {
                 r.aimy_document_url = doc_url;
                 r.aimy_processing_status = Some(ps);
