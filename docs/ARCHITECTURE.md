@@ -1,6 +1,6 @@
 # AiMY Meetings Desktop Client — Architecture & Technical Documentation
 
-**AiMY Meetings Desktop Client** is a desktop meeting recorder, neural audio enhancer, and **AiMY Knowledge** synchronization companion built with **Electron 35**, **React 19**, **TypeScript 5.8**, **Tailwind CSS 4**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
+**AiMY Meetings Desktop Client** is a native desktop meeting recorder, neural speech enhancer, and **AiMY Knowledge** synchronization companion built with **Tauri v2 (Rust + WebView2)**, **React 19**, **TypeScript 5.8**, **Tailwind CSS 4**, and the official **AiMY UI** design system (`@flairstech-aimy/ui` + `@flairstech-aimy/tokens`).
 
 ---
 
@@ -8,27 +8,28 @@
 
 ```mermaid
 flowchart TB
-    subgraph Renderer["Renderer Process (React 19 + @flairstech-aimy/ui)"]
-        UI["Dashboard & Recording Detail UI"]
+    subgraph Frontend["WebView2 Frontend (React 19 + @flairstech-aimy/ui)"]
+        UI["Dashboard, RecordingDetail & RecordingAudioPlayer"]
         PromptUI["Floating Meeting Prompt (?mode=prompt)"]
-        Capture["WebAudio Mixer (System Loopback + Mic + Limiter)"]
+        Tester["DeepFilterAudioTester (Settings Before/After Lab)"]
+        Bridge["tauriBridge.ts (window.aimyDesktop via invoke/listen)"]
     end
 
-    subgraph Preload["Preload Bridge (contextIsolation: true)"]
-        API["window.aimyDesktop IPC Bridge"]
+    subgraph Backend["Tauri v2 Rust Backend (src-tauri/src/)"]
+        Main["main.rs — Commands, Tray, Single-Instance & Deep-Link"]
+        Capture["audio_capture.rs — Native WASAPI Loopback + Mic (cpal/hound)"]
+        Detector["meeting_detector.rs — Win32 EnumWindows + DWM + ConsentStore"]
+        Store["recorder_store.rs — Persistent JSON Store & Audio Files"]
+        Enhancer["audio_enhancer.rs — DeepFilterNet3 + FFmpeg + Preview"]
+        Auth["auth.rs — PKCE OAuth, Built-in Fallback & Windows DPAPI"]
+        Conn["connectivity.rs — Online/Offline Reachability Monitor"]
+        Sync["sync_manager.rs & aimy_api.rs — Multipart Upload & Polling"]
+        PromptWin["prompt_window.rs — Always-on-top Bottom-Right Banner"]
     end
 
-    subgraph Main["Electron Main Process (Node.js)"]
-        Index["App Lifecycle, Custom Protocol (aimy-media://) & Tray"]
-        Detector["MeetingDetector (Windows ConsentStore + Win32 / macOS)"]
-        Store["RecorderStore (JSON DB + Audio Files)"]
-        Enhancer["AudioEnhancer (DeepFilterNet3 + FFmpeg)"]
-        Auth["AuthManager (Cognito OAuth + safeStorage Encryption)"]
-        Sync["SyncManager & AimyApiClient"]
-    end
-
-    subgraph Native["Bundled Native Binaries (resources/)"]
-        DF["resources/bin/deep-filter.exe (DeepFilterNet3)"]
+    subgraph Native["Bundled Resources (resources/)"]
+        DF["resources/bin/deep-filter.exe (DeepFilterNet3 48kHz)"]
+        Sample["resources/deepfilter-test-sample.mp3 (Embedded via include_bytes!)"]
     end
 
     subgraph Cloud["AiMY Knowledge Cloud"]
@@ -37,16 +38,20 @@ flowchart TB
         AimyConsole["AiMY Knowledge Web Console"]
     end
 
-    UI <--> API
-    PromptUI <--> API
-    Capture --> API
-    API <--> Index
-    Index --> Detector
-    Index --> Store
-    Index --> Auth
-    Index --> Sync
+    UI <--> Bridge
+    PromptUI <--> Bridge
+    Tester <--> Bridge
+    Bridge <--> Main
+    Main --> Capture
+    Main --> Detector
+    Main --> Store
+    Main --> Auth
+    Main --> Conn
+    Main --> Sync
+    Main --> PromptWin
     Store --> Enhancer
     Enhancer --> DF
+    Enhancer --> Sample
     Auth <--> Cognito
     Auth <--> AimyConsole
     Sync <--> AimyAPI
@@ -60,49 +65,61 @@ flowchart TB
 aimy-meetings-desktop-client/
 ├── .github/
 │   └── workflows/
-│       └── release.yml                 # Automated GitHub Release workflow on v* tags
+│       └── release.yml                     # Auto-versioning & Windows x64 GitHub Release on push to main
 ├── docs/
-│   ├── ARCHITECTURE.md                 # System architecture & internal technical reference
-│   ├── INSTALLATION.md                 # End-user & developer installation guide
-│   └── RELEASES.md                     # Packaging, versioning & release publishing guide
+│   ├── ARCHITECTURE.md                     # System architecture & internal technical reference
+│   ├── INSTALLATION.md                     # End-user Windows setup & developer build guide
+│   └── RELEASES.md                         # Packaging, versioning & CI/CD release guide
 ├── resources/
-│   ├── icon.ico / icon.png / icon.svg  # Application branding icons
-│   ├── tray-idle.png / tray-recording.png
+│   ├── icon.ico / icon.png / icon.svg      # Application branding icons
+│   ├── mark.svg
+│   ├── tray-idle.png / tray-recording.png  # Embedded system tray icons
+│   ├── deepfilter-test-sample.mp3          # Embedded noisy speech clip for Settings Audio Tester
 │   └── bin/
-│       └── deep-filter.exe             # DeepFilterNet3 48kHz full-band neural speech enhancer
+│       └── deep-filter.exe                 # DeepFilterNet3 48kHz full-band neural speech enhancer
 ├── scripts/
-│   └── package-release.ps1             # Standalone Windows x64 release packager & SHA256 generator
+│   └── package-release.ps1                 # Windows x64 NSIS + portable ZIP packager & SHA256SUMS generator
+├── src-tauri/
+│   ├── Cargo.toml                          # Rust dependencies (tauri v2, cpal, hound, reqwest, windows-sys, ...)
+│   ├── tauri.conf.json                     # Tauri v2 app metadata, NSIS bundler, asset protocol & deep-link
+│   ├── capabilities/
+│   │   └── default.json                    # Tauri v2 IPC capability permissions
+│   ├── icons/                              # Bundled app icons for NSIS & exe metadata
+│   └── src/
+│       ├── main.rs                         # Tauri entry point, commands, tray, deep links & event wiring
+│       ├── aimy_api.rs                     # Streaming multipart & JSON client for AiMY Knowledge API
+│       ├── audio_capture.rs                # Native WASAPI loopback + mic mixer & soft-knee limiter (cpal)
+│       ├── audio_enhancer.rs               # DeepFilterNet3 (0–100% strength + --pf) + FFmpeg + live preview
+│       ├── auth.rs                         # System-browser PKCE OAuth, built-in fallback & DPAPI encryption
+│       ├── connectivity.rs                 # Online/offline reachability monitor for local-first sync
+│       ├── meeting_detector.rs             # Native Win32/DWM/ConsentStore detector + unit tests
+│       ├── prompt_window.rs                # Always-on-top bottom-right meeting detection banner window
+│       ├── recorder_store.rs               # Persistent recordings/settings store & crash recovery
+│       ├── sync_manager.rs                 # Background upload, transcription polling & indexing manager
+│       └── types.rs                        # Shared Rust/JSON data models
 ├── src/
-│   ├── main/
-│   │   ├── index.ts                    # Electron entry point, tray, custom media protocol & IPC
-│   │   ├── aimyApi.ts                  # Streaming multipart & JSON client for AiMY Knowledge API
-│   │   ├── appIcons.ts                 # NativeImage icon loader for window, tray & notifications
-│   │   ├── audioEnhancer.ts            # DeepFilterNet3 + FFmpeg loudness normalization pipeline
-│   │   ├── auth.ts                     # System-browser PKCE OAuth, embedded fallback, expiry monitor & safeStorage
-│   │   ├── connectivity.ts             # Online/offline & wake reachability monitor for local-first sync
-│   │   ├── meetingDetector.ts          # Active call detector (Teams, Zoom, Meet, Slack, Webex, Discord)
-│   │   ├── promptWindow.ts             # Always-on-top bottom-right meeting detection banner window
-│   │   ├── recorderStore.ts            # Persistent recordings/settings store & crash recovery
-│   │   └── syncManager.ts              # Background upload, transcription polling & indexing manager
-│   ├── preload/
-│   │   └── index.ts                    # Type-safe contextBridge exposing window.aimyDesktop
 │   ├── renderer/
-│   │   ├── App.tsx                     # Main dashboard & meeting prompt router
+│   │   ├── App.tsx                         # Main dashboard & meeting prompt router
+│   │   ├── main.tsx                        # React 19 entry point + tauriBridge initialization
+│   │   ├── styles.css                      # Tailwind CSS 4 + AiMY tokens + custom slider/player styles
 │   │   ├── components/
-│   │   │   ├── LiveRecorderBar.tsx     # Active recording controls, waveform & live notes drawer
-│   │   │   ├── MeetingPrompt.tsx       # Notion-style bottom-right meeting detection banner
-│   │   │   ├── RecordingCard.tsx       # Sidebar list item with live status badges & progress
-│   │   │   ├── RecordingDetail.tsx     # Audio player, notes editor & AiMY sync actions
-│   │   │   ├── SettingsDialog.tsx      # Workspace targets & audio devices
-│   │   │   └── SignInPromptDialog.tsx  # Contextual sign-in modal with browser PKCE, built-in fallback & local-only mode
+│   │   │   ├── DeepFilterAudioTester.tsx   # Interactive before/after DeepFilterNet3 tester (built-in or 6s mic)
+│   │   │   ├── LiveRecorderBar.tsx         # Active recording controls, waveform & live notes drawer
+│   │   │   ├── MeetingPrompt.tsx           # Bottom-right meeting detection banner UI
+│   │   │   ├── RecordingAudioPlayer.tsx    # 60fps waveform player with drag scrubbing & ±10s skip
+│   │   │   ├── RecordingCard.tsx           # Sidebar list item with live status badges & upload %
+│   │   │   ├── RecordingDetail.tsx         # Audio player, notes editor & AiMY sync actions
+│   │   │   ├── SettingsDialog.tsx          # Workspace targets, DeepFilterNet3 tuning & audio settings
+│   │   │   └── SignInPromptDialog.tsx      # Contextual sign-in modal (browser PKCE, built-in, local-only)
 │   │   └── lib/
-│   │       ├── audioCapture.ts         # WebAudio loopback + microphone mixer
-│   │       └── format.ts               # Timestamp, duration & file-size formatters
+│   │       ├── audioCapture.ts             # Frontend controller bridging native cpal capture & fallback
+│   │       ├── format.ts                   # Timestamp, duration & file-size formatters
+│   │       └── tauriBridge.ts              # Typed window.aimyDesktop shim over Tauri invoke/listen
 │   └── shared/
-│       └── types.ts                    # Shared TypeScript interfaces, sync states & default settings
+│       └── types.ts                        # Shared TypeScript interfaces, sync states & default settings
 ├── CHANGELOG.md
-├── electron.vite.config.ts
 ├── package.json
+├── vite.config.ts
 └── README.md
 ```
 
@@ -110,45 +127,51 @@ aimy-meetings-desktop-client/
 
 ## 3. Core Subsystems
 
-### 3.1 Dual-Source Audio Capture & Broadcast Limiter (`src/renderer/lib/audioCapture.ts`)
-1. **System Loopback Capture**: Uses Electron's `session.defaultSession.setDisplayMediaRequestHandler` to grant Windows WASAPI loopback audio (`audio: 'loopback'`) via `navigator.mediaDevices.getDisplayMedia` without prompting the user for a screen picker.
-2. **Microphone Capture**: Requests the user's selected microphone with browser echo cancellation, noise suppression, and auto-gain control enabled.
-3. **Mixing & Broadcast Limiting**: Both streams feed into a 48 kHz `AudioContext` through per-channel gain nodes and a master `DynamicsCompressorNode` to prevent clipping when multiple participants speak simultaneously.
-4. **Output**: `MediaRecorder` encodes the mixed stream (`audio/webm;codecs=opus`).
+### 3.1 Native Dual-Source Audio Capture & Broadcast Limiter (`src-tauri/src/audio_capture.rs`)
+1. **Native Windows WASAPI Loopback (`cpal`)**: Captures system/meeting audio directly from the default Windows output device in WASAPI loopback mode without requiring any screen-sharing dialog or browser permissions.
+2. **Microphone Capture (`cpal`)**: Simultaneously opens the selected microphone input device (or system default) on a dedicated Rust capture thread.
+3. **48 kHz Mixing & Soft-Knee Limiter**: Downmixes and resamples both inputs to 48 kHz mono, blends them in real time with a soft-knee hyperbolic-tangent (`tanh`) broadcast limiter to prevent clipping when multiple participants speak at once, and streams live audio levels back to the UI for the live waveform visualizer.
+4. **Output**: Writes a clean temporary 48 kHz 16-bit PCM `.wav` file via `hound`, which is handed immediately to the enhancement/encoding pipeline when recording stops.
 
-### 3.2 Neural Speech Enhancement Pipeline (`src/main/audioEnhancer.ts`)
+### 3.2 Neural Speech Enhancement Pipeline & Audio Tester (`src-tauri/src/audio_enhancer.rs`)
 When a recording finishes (or when an audio file is imported or manually enhanced), `RecorderStore` runs a three-stage mastering pipeline:
-1. **Pre-Conditioning (FFmpeg)**: Converts raw audio to 48 kHz 16-bit mono PCM WAV with an 80 Hz high-pass filter (`highpass=f=80`) and `-2 dB` headroom (`volume=-2dB`) to eliminate low-end rumble and prevent neural clipping.
-2. **Full-Band Neural Denoising (`DeepFilterNet3`)**: Executes `resources/bin/deep-filter.exe --pf --compensate-delay` to remove background noise (fans, typing, street noise, room reverb) while preserving speech formants.
-3. **Speech Loudness Normalization & MP3 Encoding (FFmpeg)**: Applies dynamic audio normalization (`dynaudnorm=f=150:g=15:p=0.9:m=10`) and encodes to a clean 44.1 kHz mono `128 kbps` `.mp3` ready for AiMY ingestion.
-4. **Automatic Fallback**: If `deep-filter.exe` is unavailable, gracefully falls back to FFmpeg spectral FFT denoising (`highpass=f=80,afftdn=nf=-25,dynaudnorm=f=150:g=15:p=0.9:m=10`).
+1. **Pre-Conditioning (FFmpeg)**: Converts input audio to 48 kHz 16-bit mono PCM WAV with an 80 Hz high-pass filter (`highpass=f=80`) and `-2 dB` headroom (`volume=-2dB`) to eliminate low-end rumble and prevent neural clipping.
+2. **Configurable Neural Denoising (`DeepFilterNet3`)**: Executes `bin/deep-filter.exe` with `--compensate-delay`, optional `--pf` post-filter, and `--atten-lim-db` mapped from the user's **0–100% Noise filtering strength** setting:
+   - `0%` → bypass (no noise reduction)
+   - `25%` (Light) → `10.0 dB`
+   - `50%` (Balanced, default) → `20.0 dB`
+   - `75%` (Strong) → `30.0 dB`
+   - `100%` (Max) → `100.0 dB` (unlimited attenuation)
+3. **Loudness Normalization & MP3 Encoding (FFmpeg)**: Applies dynamic speech normalization (`dynaudnorm=f=150:g=15:p=0.9:m=10`) and encodes to 44.1 kHz mono `128 kbps` `.mp3`.
+4. **Automatic Fallback**: If `deep-filter.exe` is unavailable, falls back to FFmpeg spectral FFT denoising (`highpass=f=80,afftdn=nr=<dB>:nf=-25,dynaudnorm=...`).
+5. **Interactive Before/After Audio Tester (`DeepFilterAudioTester.tsx` + `audio_preview_deepfilter`)**: Renders synchronized Original and Filtered MP3 previews right inside **Settings → Calls & Audio** using either the embedded noisy sample (`resources/deepfilter-test-sample.mp3`, compiled via `include_bytes!`) or a custom 6-second microphone recording.
 
-### 3.3 Automatic Meeting Detection (`src/main/meetingDetector.ts`)
-- **Windows Detection Worker**: Spawns a hidden background PowerShell worker that polls every 2.5 seconds:
-  1. Reads `HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\{microphone,webcam}` (both packaged and `NonPackaged` apps) where `LastUsedTimeStop == 0`.
-  2. Enumerates visible top-level windows and their owning process names via P/Invoke `user32.dll` (`EnumWindows`, `IsWindowVisible`, `GetWindowText`, `GetWindowThreadProcessId`).
-- **macOS Detection Worker**: Uses `osascript` (`System Events`) to inspect visible application windows every 4 seconds.
+### 3.3 Automatic Meeting Detection (`src-tauri/src/meeting_detector.rs`)
+- **Pure Native Win32 Implementation (No PowerShell Subprocess)**: Polls every 2.5 seconds directly from Rust:
+  1. Reads `HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\{microphone,webcam}` (packaged and `NonPackaged` apps) where `LastUsedTimeStop == 0` via `winreg`.
+  2. Enumerates visible top-level windows and owning process names via `windows-sys` (`EnumWindows`, `IsWindowVisible`, `GetWindowTextW`, `GetWindowThreadProcessId`), filtering out DWM-cloaked UWP/MSIX ghost windows (`DwmGetWindowAttribute`) and tiny helper overlays.
+- **2-Poll Confirmation Debounce**: Requires 2 consecutive matching polls (~5 seconds) before firing so brief microphone blips or transient notifications never cause false alarms.
 - **Supported Meeting Platforms**:
-  - **Microsoft Teams** (Desktop & Web — automatically ignores idle chat/calendar tabs and pre-join setup screens)
+  - **Microsoft Teams** (Desktop & Web — strictly ignores idle tabs like `Chat`, `Calendar`, `Store`, `Settings`, popped-out chats, and pre-join device preview screens)
   - **Zoom** (Desktop & Web)
-  - **Google Meet** (Chrome, Edge, Brave, Firefox, Arc, Opera, Vivaldi)
+  - **Google Meet** (Chrome, Edge, Brave, Firefox, Arc, Opera, Vivaldi — strictly matched to the active browser process)
   - **Slack Huddles** (Desktop & Web)
   - **Cisco Webex**
   - **Discord Voice Calls**
 - **Auto-Start & Auto-Stop**:
-  - Displays a non-intrusive bottom-right floating prompt (`PromptWindowManager`) or automatically starts recording if `autoRecordOnMeeting` is enabled.
-  - Automatically stops recording when the meeting call ends (`autoStopOnMeetingEnd`) after 3 consecutive end-of-call polls (~7.5 seconds).
+  - Displays a non-intrusive bottom-right floating prompt (`PromptWindowManager`) or starts recording automatically if `autoRecordOnMeeting` is enabled.
+  - Automatically stops recording when the call ends (`autoStopOnMeetingEnd`) after consecutive end-of-call polls.
 
-### 3.4 AiMY Knowledge Authentication, Offline-First & Sync State Machine (`src/main/auth.ts`, `src/main/connectivity.ts`, `src/main/syncManager.ts`)
-- **Authentication**:
-  - **System Browser PKCE OAuth (Default)**: Registers the `aimy-meetings://` custom protocol (`aimy-meetings://auth/callback`) and opens AWS Cognito Hosted UI in the user's default browser using OAuth2 Authorization Code + PKCE (`S256`) so browser autofill, password managers, and existing SSO sessions work seamlessly.
-  - **Built-in Window Fallback**: Also supports an isolated `persist:aimy-auth` Electron `BrowserWindow` pointed at `${consoleBaseUrl}/console` (capturing tokens via `webRequest.onBeforeSendHeaders` and OIDC storage) in case the custom protocol callback isn't registered in Cognito yet.
-  - **Session Lifecycle & Auto-Prompt**: Encrypts credentials at `%APPDATA%/aimy-meetings/auth-session.dat` using OS-level `safeStorage`, proactively refreshes tokens 60 seconds before expiry, retries once on `401`, and prompts the user via an in-app modal on startup (when unauthenticated), sign-out, or token expiry — suppressed automatically while offline so local-first recording is never interrupted.
-  - **Local-First & Reconnect Sync**: `ConnectivityMonitor` combines `net.isOnline()`, reachability probes, and OS wake events. Recordings captured offline or while signed out remain `LOCAL_PENDING` and sync automatically once back online and authenticated.
-  - Also supports manual JWT token entry in Settings.
-- **Sync Modes**:
-  1. **`audio-recording` (Default)**: Streams the enhanced `.mp3` via multipart upload to `POST /processing/audio` (with automatic fallback to `POST /processing`) with real-time byte progress (`uploadProgress: 0..100`).
-  2. **`transcript-json`**: Uploads structured Markdown containing meeting metadata and user notes to `POST /processing/json`.
+### 3.4 AiMY Knowledge Authentication, Offline-First & Sync State Machine
+- **Authentication (`src-tauri/src/auth.rs`)**:
+  - **System Browser PKCE OAuth (Default)**: Registers the `aimy-meetings://` custom URI scheme via `tauri-plugin-deep-link` and `tauri-plugin-single-instance`, opening AWS Cognito Hosted UI in the user's default browser using OAuth2 Authorization Code + PKCE (`S256`) so existing SSO sessions and password managers work seamlessly.
+  - **Built-in Window Fallback**: Supports an in-app Tauri webview pointed at `${consoleBaseUrl}/console` if custom protocol redirects are blocked.
+  - **DPAPI Token Storage & Legacy Migration**: Encrypts tokens on disk at `%APPDATA%\AiMY Meetings\auth-session.dat` via Windows DPAPI (`CryptProtectData` / `CryptUnprotectData`), and automatically decrypts legacy Electron `safeStorage` (`v10` AES-256-GCM) sessions so upgrading users stay signed in seamlessly.
+  - **Proactive Refresh & Offline Suppression**: Refreshes tokens 60 seconds before expiry, retries once on `401`, and suppresses sign-in popups while offline so local recording is never disrupted.
+- **Local-First & Reconnect Sync (`connectivity.rs`, `sync_manager.rs`, `aimy_api.rs`)**:
+  - `ConnectivityMonitor` probes reachability periodically and when the frontend reports browser online/offline transitions.
+  - Recordings captured offline or while signed out stay `LOCAL_PENDING` and auto-sync when connectivity and authentication return.
+  - Supports **Audio Recording Upload** (`POST /processing/audio` with streaming byte progress `0..100%`) and **Notes Document Upload** (`POST /processing/json`).
 - **Recording Sync Lifecycle (`RecordingSyncStatus`)**:
 
 ```mermaid
@@ -170,15 +193,15 @@ stateDiagram-v2
 
 ---
 
-## 4. Local Data & Custom Media Protocol
+## 4. Local Data & Audio Playback
 
-All user data is stored in Electron's `app.getPath('userData')` directory (`%APPDATA%\aimy-meetings` on Windows):
+All user data is stored in `%APPDATA%\AiMY Meetings` on Windows (preserved identically from earlier releases so upgrades never lose local recordings or settings):
 
 | File / Directory | Purpose |
 | :--- | :--- |
-| `settings.json` | Persisted `AppSettings` (target group, agents, audio devices) |
-| `recordings.json` | Metadata, sync status, and notes for all recordings |
+| `settings.json` | Persisted `AppSettings` (target group, agents, DeepFilterNet3 strength/post-filter, audio & detection toggles) |
+| `recordings.json` | Metadata, sync status, and meeting notes for all recordings |
 | `recordings/<id>.mp3` | Enhanced mono 128 kbps MP3 audio files |
-| `auth-session.dat` | DPAPI / Keychain `safeStorage`-encrypted Cognito OAuth tokens |
+| `auth-session.dat` | Windows DPAPI-encrypted Cognito OAuth tokens |
 
-Audio playback in the renderer uses the custom privileged protocol `aimy-media://recording/<id>`, handled by `net.fetch(pathToFileURL(item.audioPath))` in the main process with full HTTP Range header support for instant scrubbing.
+Audio playback uses Tauri's scoped `asset://` protocol (restricted strictly to the user's `recordings/` directory via `asset_protocol_scope().allow_directory(...)`) paired with `RecordingAudioPlayer.tsx` for 60fps waveform scrubbing, click-and-drag seeking, and sync-safe playback state.
