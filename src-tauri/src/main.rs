@@ -16,7 +16,10 @@ use crate::audio_capture::{
     AudioCaptureManager, NativeCaptureStartOptions, NativeCaptureStartResult,
     NativeCaptureStopResult,
 };
-use crate::audio_enhancer::{check_deep_filter_available, check_ffmpeg_available};
+use crate::audio_enhancer::{
+    check_deep_filter_available, check_ffmpeg_available, generate_deep_filter_preview,
+    DeepFilterOptions,
+};
 use crate::auth::{AuthManager, AUTH_CALLBACK_URL, AUTH_PROTOCOL};
 use crate::connectivity::ConnectivityMonitor;
 use crate::meeting_detector::MeetingDetector;
@@ -24,9 +27,9 @@ use crate::prompt_window::PromptWindowManager;
 use crate::recorder_store::RecorderStore;
 use crate::sync_manager::SyncManager;
 use crate::types::{
-    AimyAgent, AimyDocumentType, AimyGroup, AppSettings, AuthSession, ConnectivityStatus,
-    CreateRecordingInput, DeleteResult, DetectedMeeting, RecordingItem, StartRecordingRequest,
-    SyncAllPendingResult, UpdateRecordingPatch,
+    AimyAgent, AimyDocumentType, AimyGroup, AppSettings, AudioPreviewResult, AuthSession,
+    ConnectivityStatus, CreateRecordingInput, DeleteResult, DetectedMeeting, RecordingItem,
+    StartRecordingRequest, SyncAllPendingResult, UpdateRecordingPatch,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -612,6 +615,26 @@ async fn system_check_deepfilter(state: State<'_, AppState>) -> Result<bool, Str
     Ok(check_deep_filter_available(state.store.resource_dir()).await)
 }
 
+#[tauri::command]
+async fn audio_preview_deepfilter(
+    state: State<'_, AppState>,
+    strength_percent: u8,
+    post_filter: bool,
+    custom_audio_base64: Option<String>,
+    custom_ext: Option<String>,
+) -> Result<AudioPreviewResult, String> {
+    generate_deep_filter_preview(
+        DeepFilterOptions {
+            strength_percent,
+            post_filter,
+        },
+        custom_audio_base64,
+        custom_ext,
+        state.store.resource_dir(),
+    )
+    .await
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -1011,6 +1034,7 @@ fn main() {
             shell_open_external,
             system_check_ffmpeg,
             system_check_deepfilter,
+            audio_preview_deepfilter,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AiMY Meetings Tauri application");

@@ -95,6 +95,8 @@ pub struct RecordingItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_enhanced: Option<bool>,
     pub enhancement_engine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enhancement_strength: Option<u8>,
     pub last_synced_at: Option<String>,
     pub error: Option<String>,
 }
@@ -138,6 +140,10 @@ pub struct AppSettings {
     pub auto_stop_on_meeting_end: bool,
     #[serde(default = "default_true")]
     pub enhance_audio: bool,
+    #[serde(default = "default_deep_filter_strength")]
+    pub deep_filter_strength: u8,
+    #[serde(default = "default_true")]
+    pub deep_filter_post_filter: bool,
     #[serde(default = "default_true")]
     pub capture_system_audio: bool,
     #[serde(default = "default_true")]
@@ -166,6 +172,10 @@ fn default_upload_mode() -> String {
     "audio-recording".to_string()
 }
 
+fn default_deep_filter_strength() -> u8 {
+    50
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -182,6 +192,8 @@ impl Default for AppSettings {
             auto_record_on_meeting: false,
             auto_stop_on_meeting_end: true,
             enhance_audio: true,
+            deep_filter_strength: default_deep_filter_strength(),
+            deep_filter_post_filter: true,
             capture_system_audio: true,
             capture_microphone: true,
             preferred_mic_device_id: None,
@@ -257,4 +269,14 @@ pub struct SyncAllPendingResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteResult {
     pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioPreviewResult {
+    pub original_base64: String,
+    pub filtered_base64: String,
+    pub engine: Option<String>,
+    pub strength_percent: u8,
+    pub post_filter: bool,
 }

@@ -902,6 +902,7 @@ export function App() {
                 recording={selectedRecording}
                 groups={groups}
                 isAuthenticated={auth.authenticated}
+                deepFilterStrength={settings.deepFilterStrength ?? 50}
                 onUpdate={async (id: string, patch: UpdateRecordingPatch) => {
                   await window.aimyDesktop.updateRecording(id, patch)
                 }}
@@ -918,11 +919,13 @@ export function App() {
                 onEnhanceAudio={async (id: string) => {
                   try {
                     const updated = await window.aimyDesktop.enhanceRecordingAudio(id)
+                    const appliedStrength =
+                      updated.enhancementStrength ?? settings.deepFilterStrength ?? 50
                     toast('Audio enhanced', {
                       sub:
                         updated.enhancementEngine === 'deepfilternet3'
-                          ? 'Cleaned with DeepFilterNet3 neural noise cancellation.'
-                          : 'Cleaned with FFmpeg speech denoising and normalization.'
+                          ? `Cleaned with DeepFilterNet3 neural noise cancellation (${appliedStrength}%).`
+                          : `Cleaned with FFmpeg speech denoising and normalization (${appliedStrength}%).`
                     })
                   } catch (err) {
                     toast('Audio enhancement failed', {

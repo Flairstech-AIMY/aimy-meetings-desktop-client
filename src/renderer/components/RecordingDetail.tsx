@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AimyNote,
   Button,
-  CallRecording,
   CopyButton,
   Divider,
   EmptyState,
@@ -46,11 +45,13 @@ import {
 } from 'lucide-react'
 import type { AimyAgent, AimyGroup, RecordingItem, UpdateRecordingPatch, UploadMode } from '@shared/types'
 import { formatBytes, formatDuration, formatTimestamp, statusPresentation } from '@renderer/lib/format'
+import { RecordingAudioPlayer } from './RecordingAudioPlayer'
 
 interface RecordingDetailProps {
   recording: RecordingItem
   groups: AimyGroup[]
   isAuthenticated: boolean
+  deepFilterStrength: number
   onUpdate: (id: string, patch: UpdateRecordingPatch) => Promise<void>
   onSync: (id: string) => Promise<void>
   onIndex: (id: string) => Promise<void>
@@ -67,6 +68,7 @@ export function RecordingDetail({
   recording,
   groups,
   isAuthenticated,
+  deepFilterStrength,
   onUpdate,
   onSync,
   onIndex,
@@ -369,7 +371,7 @@ export function RecordingDetail({
                       leading={<AudioLines className="size-3.5" />}
                       onSelect={() => void runAction('enhance', () => onEnhanceAudio(recording.id))}
                     >
-                      Enhance audio (DeepFilterNet3)
+                      Enhance audio (DeepFilterNet3 · {deepFilterStrength}%)
                     </MenuItem>
                   )}
 
@@ -438,7 +440,13 @@ export function RecordingDetail({
               </>
             ) : null}
 
-            {recording.audioEnhanced && <Tag tone="ai">Enhanced</Tag>}
+            {recording.audioEnhanced && (
+              <Tag tone="ai">
+                {recording.enhancementStrength != null
+                  ? `Enhanced · ${recording.enhancementStrength}%`
+                  : 'Enhanced'}
+              </Tag>
+            )}
             {recording.isPersonal && <Tag tone="neutral">Personal</Tag>}
             {recording.lifecycle === 'draft' && <Tag tone="warn">Draft</Tag>}
             {recording.aimyDocId && (
@@ -484,14 +492,13 @@ export function RecordingDetail({
           </Notice>
         )}
 
-        {/* Full-Width Uncluttered Audio Player */}
+        {/* Full-Width Uncluttered Seekable Audio Player */}
         {recording.audioPath && (
-          <CallRecording
+          <RecordingAudioPlayer
             key={`${recording.id}:${recording.audioPath}:${recording.fileSizeBytes ?? 0}:${recording.audioEnhanced ? 1 : 0}`}
             id={recording.id}
             seconds={Math.max(1, recording.durationSeconds || 1)}
             src={audioUrl ? `${audioUrl}?v=${recording.fileSizeBytes ?? 0}-${recording.audioEnhanced ? 1 : 0}` : undefined}
-            kind="call"
           />
         )}
 

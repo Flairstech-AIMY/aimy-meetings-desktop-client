@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
   Button,
+  Chip,
   CopyButton,
   Dialog,
   DialogContent,
+  Divider,
   Field,
   Input,
   Notice,
@@ -24,13 +26,15 @@ import {
   Check,
   Cloud,
   KeyRound,
-  Link2
+  Link2,
+  SlidersHorizontal
 } from 'lucide-react'
 import type {
   AimyGroup,
   AppSettings,
   UploadMode
 } from '@shared/types'
+import { DeepFilterAudioTester } from './DeepFilterAudioTester'
 
 interface SettingsDialogProps {
   open: boolean
@@ -47,6 +51,38 @@ interface SettingsDialogProps {
 }
 
 type SettingsTab = 'sync' | 'audio' | 'connection'
+
+const DEEP_FILTER_PRESETS = [
+  { label: 'Light', value: 25 },
+  { label: 'Balanced', value: 50 },
+  { label: 'Strong', value: 75 },
+  { label: 'Max', value: 100 }
+] as const
+
+function formatAttenuationReadout(percent: number): string {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)))
+  if (clamped <= 0) return '0% · Off'
+  if (clamped >= 100) return '100% · Max'
+  const db = Math.round(clamped * 0.4 * 10) / 10
+  const dbText = Number.isInteger(db) ? String(db) : db.toFixed(1)
+  return `${clamped}% · ${dbText} dB`
+}
+
+function describeDeepFilterStrength(percent: number): string {
+  if (percent <= 0) {
+    return 'Bypassed — audio will be encoded to MP3 without noise suppression.'
+  }
+  if (percent <= 35) {
+    return 'Light cleanup — reduces subtle hum and hiss while preserving natural room ambience.'
+  }
+  if (percent <= 65) {
+    return 'Balanced — cleans fans, AC, and keyboard clicks while keeping speech warm and natural.'
+  }
+  if (percent < 100) {
+    return 'Strong suppression — ideal for noisy offices and loud background distractions.'
+  }
+  return 'Maximum suppression — full DeepFilterNet3 attenuation with no attenuation limit.'
+}
 
 export function SettingsDialog({
   open,
@@ -297,6 +333,108 @@ export function SettingsDialog({
                   }
                 />
               </div>
+
+              {draft.enhanceAudio && (() => {
+                const strength = Math.max(0, Math.min(100, draft.deepFilterStrength ?? 50))
+                const postFilter = draft.deepFilterPostFilter ?? true
+                return (
+                  <div className="flex flex-col gap-3 rounded-xl border border-hairline bg-sunken p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <SlidersHorizontal className="size-3.5 text-ai-ink" />
+                        <span className="text-xs font-semibold text-ink">
+                          DeepFilterNet3 tuning
+                        </span>
+                      </div>
+                      <Tag tone={strength > 0 ? 'ai' : 'neutral'} className="font-mono">
+                        {formatAttenuationReadout(strength)}
+                      </Tag>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label
+                          htmlFor="deepfilter-strength-slider"
+                          className="text-2xs font-medium text-ink-secondary"
+                        >
+                          Noise filtering strength
+                        </label>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {DEEP_FILTER_PRESETS.map((preset) => (
+                            <Chip
+                              key={preset.value}
+                              selected={strength === preset.value}
+                              onClick={() =>
+                                setDraft((d) => ({ ...d, deepFilterStrength: preset.value }))
+                              }
+                            >
+                              {preset.label} ({preset.value}%)
+                            </Chip>
+                          ))}
+                        </div>
+                      </div>
+
+                      <input
+                        id="deepfilter-strength-slider"
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={strength}
+                        aria-label="DeepFilterNet3 noise filtering strength percentage"
+                        aria-valuetext={formatAttenuationReadout(strength)}
+                        onChange={(e) =>
+                          setDraft((d) => ({
+                            ...d,
+                            deepFilterStrength: Number(e.target.value)
+                          }))
+                        }
+                        className="aimy-range my-1"
+                        style={{
+                          background: `linear-gradient(to right, var(--brand) 0%, var(--brand) ${strength}%, var(--w14) ${strength}%, var(--w14) 100%)`
+                        }}
+                      />
+
+                      <div className="flex items-center justify-between font-mono text-2xs text-ink-quiet">
+                        <span>0%</span>
+                        <span>25%</span>
+                        <span>50%</span>
+                        <span>75%</span>
+                        <span>100%</span>
+                      </div>
+
+                      <p className="m-0 text-2xs text-ink-secondary">
+                        {describeDeepFilterStrength(strength)}
+                      </p>
+                    </div>
+
+                    <Divider />
+
+                    <div className="flex flex-col gap-1">
+                      <Switch
+                        label="Post-filter for residual noise (--pf)"
+                        checked={postFilter}
+                        disabled={strength === 0}
+                        onCheckedChange={(checked) =>
+                          setDraft((d) => ({ ...d, deepFilterPostFilter: checked }))
+                        }
+                      />
+                      <p className="m-0 text-2xs text-ink-quiet">
+                        Applies extra attenuation to quiet background noise. Turn off for a more natural voice timbre.
+                      </p>
+                    </div>
+
+                    <Divider />
+
+                    <DeepFilterAudioTester
+                      open={open && tab === 'audio'}
+                      strengthPercent={strength}
+                      postFilter={postFilter}
+                      ffmpegAvailable={ffmpegAvailable}
+                    />
+                  </div>
+                )
+              })()}
 
               {!ffmpegAvailable && (
                 <Notice tone="warn" title="FFmpeg not detected on PATH">

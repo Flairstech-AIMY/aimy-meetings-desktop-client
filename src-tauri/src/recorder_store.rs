@@ -1,5 +1,5 @@
 use crate::audio_enhancer::{
-    check_ffmpeg_available, enhance_and_encode_to_mp3, probe_duration_seconds,
+    check_ffmpeg_available, enhance_and_encode_to_mp3, probe_duration_seconds, DeepFilterOptions,
 };
 use crate::types::{AppSettings, CreateRecordingInput, RecordingItem, UpdateRecordingPatch};
 use chrono::Utc;
@@ -92,6 +92,10 @@ impl RecorderStore {
                         loaded_settings.default_lifecycle = "draft".to_string();
                         migrated = true;
                     }
+                    if loaded_settings.deep_filter_strength > 100 {
+                        loaded_settings.deep_filter_strength = 100;
+                        migrated = true;
+                    }
                 }
             }
         }
@@ -182,6 +186,7 @@ impl RecorderStore {
             let mut s = guard.settings.clone();
             s.default_is_personal = true;
             s.default_lifecycle = "draft".to_string();
+            s.deep_filter_strength = s.deep_filter_strength.min(100);
             let serialized = serde_json::to_string_pretty(&s).unwrap_or_default();
             (serialized, s, guard.settings_listeners.clone())
         };
@@ -196,6 +201,7 @@ impl RecorderStore {
         let mut s = guard.settings.clone();
         s.default_is_personal = true;
         s.default_lifecycle = "draft".to_string();
+        s.deep_filter_strength = s.deep_filter_strength.min(100);
         s
     }
 
@@ -213,6 +219,7 @@ impl RecorderStore {
                 if let Ok(mut merged) = serde_json::from_value::<AppSettings>(current_val) {
                     merged.default_is_personal = true;
                     merged.default_lifecycle = "draft".to_string();
+                    merged.deep_filter_strength = merged.deep_filter_strength.min(100);
                     guard.settings = merged;
                 }
             }
@@ -278,6 +285,7 @@ impl RecorderStore {
                 aimy_transcript: None,
                 audio_enhanced: None,
                 enhancement_engine: None,
+                enhancement_strength: None,
                 last_synced_at: None,
                 error: None,
             };
@@ -394,8 +402,14 @@ impl RecorderStore {
         let mut final_ext = normalized_ext.to_string();
         let mut audio_enhanced = false;
         let mut enhancement_engine: Option<String> = None;
+        let mut enhancement_strength: Option<u8> = None;
 
-        let should_enhance = self.get_settings().enhance_audio;
+        let settings = self.get_settings();
+        let df_options = DeepFilterOptions {
+            strength_percent: settings.deep_filter_strength,
+            post_filter: settings.deep_filter_post_filter,
+        };
+        let should_enhance = settings.enhance_audio && df_options.strength_percent > 0;
         let has_ffmpeg = check_ffmpeg_available().await;
 
         if has_ffmpeg
@@ -412,6 +426,7 @@ impl RecorderStore {
                 raw_path,
                 &temp_out_path,
                 should_enhance,
+                df_options,
                 self.resource_dir(),
             )
             .await
@@ -430,6 +445,7 @@ impl RecorderStore {
                             final_ext = ".mp3".to_string();
                             audio_enhanced = res.enhanced;
                             enhancement_engine = res.engine;
+                            enhancement_strength = res.strength_percent;
                         }
                     }
                 }
@@ -464,6 +480,7 @@ impl RecorderStore {
             item.duration_seconds = probed;
             item.audio_enhanced = Some(audio_enhanced);
             item.enhancement_engine = enhancement_engine;
+            item.enhancement_strength = enhancement_strength;
             item.sync_status = "LOCAL_PENDING".to_string();
             item.error = None;
         })
@@ -485,6 +502,18 @@ impl RecorderStore {
             return Err("FFmpeg is required to enhance audio.".to_string());
         }
 
+        let settings = self.get_settings();
+        if settings.deep_filter_strength == 0 {
+            return Err(
+                "DeepFilterNet3 filtering strength is set to 0%. Increase it in Preferences → Calls & Audio."
+                    .to_string(),
+            );
+        }
+        let df_options = DeepFilterOptions {
+            strength_percent: settings.deep_filter_strength,
+            post_filter: settings.deep_filter_post_filter,
+        };
+
         let prev_status = existing.sync_status.clone();
         self.mutate_recording(id, |item| {
             item.sync_status = "ENCODING".to_string();
@@ -498,6 +527,7 @@ impl RecorderStore {
             &audio_path,
             &out_path,
             true,
+            df_options,
             self.resource_dir(),
         )
         .await
@@ -558,6 +588,7 @@ impl RecorderStore {
             item.duration_seconds = probed;
             item.audio_enhanced = Some(res.enhanced);
             item.enhancement_engine = res.engine;
+            item.enhancement_strength = res.strength_percent;
             item.sync_status = if prev_status == "SYNCED" {
                 "SYNCED".to_string()
             } else {
@@ -609,8 +640,14 @@ impl RecorderStore {
         let mut final_ext = src_ext.clone();
         let mut audio_enhanced = false;
         let mut enhancement_engine: Option<String> = None;
+        let mut enhancement_strength: Option<u8> = None;
 
-        let should_enhance = self.get_settings().enhance_audio;
+        let settings = self.get_settings();
+        let df_options = DeepFilterOptions {
+            strength_percent: settings.deep_filter_strength,
+            post_filter: settings.deep_filter_post_filter,
+        };
+        let should_enhance = settings.enhance_audio && df_options.strength_percent > 0;
         if (!SUPPORTED_DIRECT_EXTS.contains(&src_ext.as_str()) || should_enhance)
             && check_ffmpeg_available().await
         {
@@ -629,6 +666,7 @@ impl RecorderStore {
                 &dest_path,
                 &temp_out,
                 should_enhance,
+                df_options,
                 self.resource_dir(),
             )
             .await
@@ -648,6 +686,7 @@ impl RecorderStore {
                     final_ext = ".mp3".to_string();
                     audio_enhanced = res.enhanced;
                     enhancement_engine = res.engine;
+                    enhancement_strength = res.strength_percent;
                 }
             }
         }
@@ -667,6 +706,7 @@ impl RecorderStore {
             item.duration_seconds = duration_seconds;
             item.audio_enhanced = Some(audio_enhanced);
             item.enhancement_engine = enhancement_engine;
+            item.enhancement_strength = enhancement_strength;
             item.sync_status = "LOCAL_PENDING".to_string();
             item.error = None;
         })

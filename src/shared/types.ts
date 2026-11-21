@@ -85,6 +85,7 @@ export interface RecordingItem {
   aimyTranscript?: string | null
   audioEnhanced?: boolean
   enhancementEngine?: string | null
+  enhancementStrength?: number | null
   lastSyncedAt?: string | null
   error?: string | null
 }
@@ -111,6 +112,8 @@ export interface AppSettings {
   autoRecordOnMeeting: boolean
   autoStopOnMeetingEnd: boolean
   enhanceAudio: boolean
+  deepFilterStrength: number
+  deepFilterPostFilter: boolean
   captureSystemAudio: boolean
   captureMicrophone: boolean
   preferredMicDeviceId: string | null
@@ -130,6 +133,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoRecordOnMeeting: false,
   autoStopOnMeetingEnd: true,
   enhanceAudio: true,
+  deepFilterStrength: 50,
+  deepFilterPostFilter: true,
   captureSystemAudio: true,
   captureMicrophone: true,
   preferredMicDeviceId: null
@@ -182,6 +187,14 @@ export interface NativeCaptureStopResult {
   tempWavPath: string
   ext: string
   durationSeconds: number
+}
+
+export interface AudioPreviewResult {
+  originalBase64: string
+  filteredBase64: string
+  engine?: string | null
+  strengthPercent: number
+  postFilter: boolean
 }
 
 export interface AimyDesktopAPI {
@@ -246,6 +259,12 @@ export interface AimyDesktopAPI {
   openExternal: (url: string) => Promise<void>
   checkFfmpegAvailable: () => Promise<boolean>
   checkDeepFilterAvailable: () => Promise<boolean>
+  previewDeepFilter: (options: {
+    strengthPercent: number
+    postFilter: boolean
+    customAudioBase64?: string | null
+    customExt?: string | null
+  }) => Promise<AudioPreviewResult>
 
   // Native audio capture (Tauri WASAPI mic + loopback)
   startNativeAudioCapture?: (options: {

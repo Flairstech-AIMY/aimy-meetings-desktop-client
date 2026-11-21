@@ -1,6 +1,6 @@
 [package]
 name = "aimy-meetings"
-version = "1.0.0"
+version = "1.1.0"
 description = "AiMY Meetings Desktop Client — desktop meeting recorder, DeepFilterNet3 speech enhancer and AiMY Knowledge sync companion"
 authors = ["FlairsTech AiMY Team"]
 license = "UNLICENSED"
@@ -43,6 +43,7 @@ hound = "3.5"
 winreg = "0.55"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
+  "Win32_Graphics_Dwm",
   "Win32_Security_Cryptography",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",

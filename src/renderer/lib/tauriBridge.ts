@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import type {
   AimyDesktopAPI,
   AppSettings,
+  AudioPreviewResult,
   AuthSession,
   ConnectivityStatus,
   CreateRecordingInput,
@@ -116,6 +117,13 @@ export function createTauriAimyDesktopAPI(): AimyDesktopAPI {
     openExternal: (url: string) => invoke<void>('shell_open_external', { url }),
     checkFfmpegAvailable: () => invoke<boolean>('system_check_ffmpeg'),
     checkDeepFilterAvailable: () => invoke<boolean>('system_check_deepfilter'),
+    previewDeepFilter: (options) =>
+      invoke<AudioPreviewResult>('audio_preview_deepfilter', {
+        strengthPercent: options.strengthPercent,
+        postFilter: options.postFilter,
+        customAudioBase64: options.customAudioBase64 ?? null,
+        customExt: options.customExt ?? null
+      }),
 
     // Native WASAPI audio capture
     startNativeAudioCapture: (options) => invoke('capture_start', { options }),
